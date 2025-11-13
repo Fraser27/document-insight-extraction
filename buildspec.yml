@@ -1,0 +1,32 @@
+version: 0.2
+
+# CodeBuild buildspec for Lambda layers and deployment
+# This will be used to build Lambda layers with dependencies
+
+phases:
+  install:
+    runtime-versions:
+      python: 3.12
+    commands:
+      - echo "Installing build dependencies..."
+      - pip install --upgrade pip
+      
+  pre_build:
+    commands:
+      - echo "Pre-build phase started on `date`"
+      - echo "Installing CDK dependencies..."
+      - pip install -r requirements.txt
+      
+  build:
+    commands:
+      - echo "Build phase started on `date`"
+      - echo "This buildspec will be used for Lambda layer creation in future tasks"
+      
+  post_build:
+    commands:
+      - echo "Build completed on `date`"
+
+artifacts:
+  files:
+    - '**/*'
+  name: document-insight-build-$(date +%Y%m%d-%H%M%S)

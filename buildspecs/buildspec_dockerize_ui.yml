@@ -1,0 +1,121 @@
+version: 0.2
+
+# BuildSpec for building and deploying the React UI to AppRunner
+# This buildspec builds the React application, creates a Docker image,
+# pushes it to ECR, and triggers AppRunner deployment
+
+phases:
+  install:
+    runtime-versions:
+      nodejs: 20
+    commands:
+      - echo "Installing build dependencies..."
+      - npm --version
+      - node --version
+      
+  pre_build:
+    commands:
+      - echo "Build started on `date`"
+      - echo "Building React UI for AppRunner deployment"
+      - echo "Project name - $PROJECT_NAME"
+      - echo "Environment - $ENV_NAME"
+      - echo "AWS Region - $AWS_REGION"
+      - echo "ECR Repository URI - $ECR_REPOSITORY_URI"
+      - echo "AppRunner Service ARN - $APPRUNNER_SERVICE_ARN"
+      
+      # Log in to Amazon ECR
+      - echo "Logging in to Amazon ECR..."
+      - aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_REPOSITORY_URI
+      
+      # Set image tag with timestamp
+      - export IMAGE_TAG=$(date +%Y%m%d-%H%M%S)
+      - echo "Image tag - $IMAGE_TAG"
+      
+  build:
+    commands:
+      - echo "========================================="
+      - echo "Building React application..."
+      - echo "========================================="
+      
+      # Navigate to frontend directory
+      - cd frontend
+      
+      # Install dependencies
+      - echo "Installing npm dependencies..."
+      - npm ci
+      
+      # Build React application
+      - echo "Building React app with Vite..."
+      - npm run build
+      
+      # Verify build output
+      - echo "Build output size:"
+      - du -sh dist
+      - ls -la dist
+      
+      # Build Docker image
+      - echo "========================================="
+      - echo "Building Docker image..."
+      - echo "========================================="
+      - docker build -t $PROJECT_NAME-ui:$IMAGE_TAG .
+      - docker tag $PROJECT_NAME-ui:$IMAGE_TAG $ECR_REPOSITORY_URI:$IMAGE_TAG
+      - docker tag $PROJECT_NAME-ui:$IMAGE_TAG $ECR_REPOSITORY_URI:latest
+      
+      # Verify Docker image
+      - echo "Docker image built successfully:"
+      - docker images | grep $PROJECT_NAME-ui
+      
+  post_build:
+    commands:
+      - echo "========================================="
+      - echo "Pushing Docker image to ECR..."
+      - echo "========================================="
+      
+      # Push Docker image to ECR
+      - docker push $ECR_REPOSITORY_URI:$IMAGE_TAG
+      - docker push $ECR_REPOSITORY_URI:latest
+      
+      - echo "Docker image pushed successfully:"
+      - echo "  $ECR_REPOSITORY_URI:$IMAGE_TAG"
+      - echo "  $ECR_REPOSITORY_URI:latest"
+      
+      # Trigger AppRunner deployment
+      - echo "========================================="
+      - echo "Triggering AppRunner deployment..."
+      - echo "========================================="
+      
+      - |
+        if [ -n "$APPRUNNER_SERVICE_ARN" ]; then
+          echo "Starting AppRunner deployment for service: $APPRUNNER_SERVICE_ARN"
+          aws apprunner start-deployment \
+            --service-arn $APPRUNNER_SERVICE_ARN \
+            --region $AWS_REGION
+          echo "AppRunner deployment triggered successfully"
+        else
+          echo "Warning: APPRUNNER_SERVICE_ARN not set, skipping deployment trigger"
+        fi
+      
+      - echo "========================================="
+      - echo "Build completed on `date`"
+      - echo "========================================="
+      
+      # Output deployment information
+      - |
+        echo "{
+          \"image_tag\": \"$IMAGE_TAG\",
+          \"ecr_repository_uri\": \"$ECR_REPOSITORY_URI\",
+          \"image_uri\": \"$ECR_REPOSITORY_URI:$IMAGE_TAG\",
+          \"latest_uri\": \"$ECR_REPOSITORY_URI:latest\",
+          \"apprunner_service_arn\": \"$APPRUNNER_SERVICE_ARN\",
+          \"build_timestamp\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"
+        }" > deployment_info.json
+      - cat deployment_info.json
+
+artifacts:
+  files:
+    - deployment_info.json
+  name: ui-deployment-artifacts
+
+cache:
+  paths:
+    - 'frontend/node_modules/**/*'
