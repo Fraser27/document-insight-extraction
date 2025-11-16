@@ -85,71 +85,12 @@ Before deploying, ensure you have the following installed:
   npm --version
   ```
 
-- **Docker**: For building Lambda layers and frontend container ([Installation Guide](https://docs.docker.com/get-docker/))
-  ```bash
-  docker --version
-  ```
-
 - **AWS Account Requirements**:
   - Access to Amazon Bedrock with model access enabled for:
     - `amazon.titan-embed-text-v2:0` (embeddings)
-    - `anthropic.claude-3-sonnet-20240229-v1:0` (insights)
+    - `global.anthropic.claude-sonnet-4-20250514-v1:0` (insights)
   - Sufficient service quotas for Lambda, API Gateway, AppRunner, etc.
 
-## Project Structure
-
-```
-document-insight-extraction/
-├── app.py                          # CDK application entry point
-├── cdk.json                        # CDK configuration and context
-├── deploy.sh                       # Deployment orchestration script
-├── destroy.sh                      # Stack cleanup script
-├── requirements.txt                # Python dependencies
-├── requirements-dev.txt            # Development dependencies
-│
-├── infrastructure/                 # CDK stack definitions
-│   ├── base_stack.py              # Base stack with common utilities
-│   ├── cognito_stack.py           # Cognito authentication
-│   ├── s3_stack.py                # S3 buckets (documents and vectors)
-│   ├── lambda_layer_stack.py      # Lambda layers (pypdf, boto3)
-│   ├── lambda_function_stack.py   # Lambda functions and WebSocket API
-│   ├── api_gateway_stack.py       # REST API endpoints
-│   ├── dynamodb_stack.py          # DynamoDB cache table
-│   └── apprunner_hosting_stack.py # AppRunner frontend hosting
-│
-├── lambda/                         # Lambda function code
-│   ├── document_processor/        # Document processing Lambda
-│   │   ├── document_processor.py  # Main handler
-│   │   ├── pdf_extractor.py       # PDF text extraction
-│   │   ├── image_detector.py      # Image detection
-│   │   ├── ocr_processor.py       # OCR processing
-│   │   ├── text_chunker.py        # Text chunking
-│   │   ├── embedding_generator.py # Embedding generation
-│   │   ├── vector_store.py        # S3 Vectors client
-│   │   └── websocket_notifier.py  # WebSocket notifications
-│   │
-│   └── insight_extractor/         # Insight extraction Lambda
-│       ├── insight_extractor.py   # Main handler
-│       ├── cache_manager.py       # DynamoDB cache operations
-│       ├── vector_query.py        # S3 Vectors queries
-│       └── insight_generator.py   # Bedrock insight generation
-│
-├── frontend/                       # React frontend application
-│   ├── src/
-│   │   ├── components/            # React components
-│   │   ├── services/              # API and WebSocket services
-│   │   ├── pages/                 # Page components
-│   │   └── types/                 # TypeScript types
-│   ├── Dockerfile                 # Docker image for AppRunner
-│   └── package.json               # Node.js dependencies
-│
-├── buildspecs/                     # CodeBuild specifications
-│   ├── buildspec_layers.yml       # Lambda layer build
-│   └── buildspec_dockerize_ui.yml # Frontend Docker build
-│
-└── scripts/                        # Utility scripts
-    └── build_lambda_layers.sh     # Local layer build script
-```
 
 ## Configuration
 
@@ -216,16 +157,6 @@ pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-### 4. Bootstrap CDK (First Time Only)
-
-```bash
-# Set your AWS account and region
-export CDK_DEFAULT_ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
-export CDK_DEFAULT_REGION=us-east-1
-
-# Bootstrap CDK
-cdk bootstrap aws://$CDK_DEFAULT_ACCOUNT/$CDK_DEFAULT_REGION
-```
 
 ## Deployment
 
@@ -251,109 +182,11 @@ The installer will:
 4. Monitor progress and display results
 5. Handle Lambda layer builds, CDK deployment, and frontend Docker image
 
-**Advantages:**
-- No local dependencies required (except AWS CLI)
-- Consistent build environment
-- Automatic retry and error handling
-- Complete deployment in 30-40 minutes
-
-### Local Deployment (Advanced)
-
-For local development and testing:
-
-```bash
-# Make script executable
-chmod +x deploy.sh
-
-# Deploy to development environment
-./deploy.sh dev
-```
-
-**Requirements:**
-- All prerequisites installed locally
-- Docker running for frontend builds
-- Manual interaction for confirmations
-
-### Manual Deployment
-
-For complete control, deploy manually:
-
-```bash
-# Set environment variables
-export CDK_DEFAULT_ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
-export CDK_DEFAULT_REGION=us-east-1
-
-# Synthesize templates
-cdk synth --context env=dev
-
-# Deploy all stacks
-cdk deploy --context env=dev --all --require-approval never --outputs-file cdk-outputs.json
-
-# Build and push frontend (after stacks are deployed)
-cd frontend
-docker build -t document-insight-ui:latest .
-aws ecr get-login-password --region $CDK_DEFAULT_REGION | docker login --username AWS --password-stdin <ECR_URI>
-docker tag document-insight-ui:latest <ECR_URI>:latest
-docker push <ECR_URI>:latest
-```
-
-### Deployment Order
-
-The stacks are deployed in the following order (dependencies are handled automatically):
-
-1. **Cognito Stack** - User authentication
-2. **S3 Stack** - Document and vector storage
-3. **Lambda Layer Stack** - Dependencies (pypdf, boto3)
-4. **DynamoDB Stack** - Insights cache
-5. **Lambda Function Stack** - Processing, extraction, and WebSocket API
-6. **API Gateway Stack** - REST endpoints
-8. **AppRunner Stack** - Frontend hosting
-
 ## Post-Deployment Setup
 
-### 1. Create Cognito User
+### 1. Access the Application
 
-After deployment, create a user to access the application:
-
-```bash
-# Get User Pool ID from outputs
-USER_POOL_ID=$(cat cdk-outputs.json | grep -o '"UserPoolId": "[^"]*"' | cut -d'"' -f4 | head -1)
-
-# Create user
-aws cognito-idp admin-create-user \
-  --user-pool-id $USER_POOL_ID \
-  --username user@example.com \
-  --user-attributes Name=email,Value=user@example.com Name=email_verified,Value=true \
-  --temporary-password TempPassword123! \
-  --message-action SUPPRESS
-
-# Set permanent password
-aws cognito-idp admin-set-user-password \
-  --user-pool-id $USER_POOL_ID \
-  --username user@example.com \
-  --password YourSecurePassword123! \
-  --permanent
-```
-
-### 2. Enable Bedrock Model Access
-
-Ensure you have access to the required Bedrock models:
-
-1. Go to AWS Console → Amazon Bedrock → Model access
-2. Request access to:
-   - Amazon Titan Embeddings G1 - Text v2
-   - Anthropic Claude 3 Sonnet
-3. Wait for approval (usually instant for Titan, may take time for Claude)
-
-### 3. Access the Application
-
-Get the frontend URL from deployment outputs:
-
-```bash
-APPRUNNER_URL=$(cat cdk-outputs.json | grep -o '"AppRunnerServiceUrl": "[^"]*"' | cut -d'"' -f4 | head -1)
-echo "Frontend URL: $APPRUNNER_URL"
-```
-
+Head to AppRunner to access the frontend url.
 Open the URL in your browser and log in with your Cognito credentials.
 
 ## Usage
@@ -471,21 +304,6 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install --upgrade pip
 pip install -r requirements.txt
-```
-
-### Lambda Layer Build Failures
-
-**Problem**: Lambda layers fail to build or are missing dependencies
-
-**Solution**:
-```bash
-# Build layers locally
-cd scripts
-chmod +x build_lambda_layers.sh
-./build_lambda_layers.sh
-
-# Or trigger CodeBuild manually
-aws codebuild start-build --project-name document-insight-lambda-layer-builder-dev
 ```
 
 ### S3 Vectors Not Working
