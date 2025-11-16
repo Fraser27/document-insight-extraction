@@ -260,9 +260,11 @@ class LambdaFunctionStack(BaseDocumentInsightStack):
                 ],
                 resources=[
                     # Titan V2 embedding model
-                    f"arn:aws:bedrock:{self.region}::foundation-model/{self.embed_model_id}",
+                    f"arn:aws:bedrock:*::foundation-model/{self.embed_model_id}",
                     # Allow any Bedrock model for OCR (flexible)
-                    f"arn:aws:bedrock:{self.region}::foundation-model/*"
+                    f"arn:aws:bedrock:*::foundation-model/*",
+                    f"arn:aws:bedrock:*:*:inference-profile/*",
+                    f"arn:aws:bedrock:*:*:application-inference-profile/*"
                 ]
             )
         )
@@ -603,7 +605,9 @@ class LambdaFunctionStack(BaseDocumentInsightStack):
                     # Titan V2 embedding model
                     f"arn:aws:bedrock:{self.region}::foundation-model/{self.embed_model_id}",
                     # Insight model (Claude or other)
-                    f"arn:aws:bedrock:{self.region}::foundation-model/{insight_model_id}",
+                    f"arn:aws:bedrock:*::foundation-model/*",
+                    f"arn:aws:bedrock:*:*:inference-profile/*",
+                    f"arn:aws:bedrock:*:*:application-inference-profile/*"
                 ]
             )
         )
