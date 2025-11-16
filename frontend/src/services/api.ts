@@ -89,6 +89,9 @@ export interface Document {
   pageCount?: number;
   status: 'processing' | 'completed' | 'failed' | 'in-progress';
   fileSize: number;
+  currentPage?: number;
+  totalChunks?: number;
+  errorCount?: number;
 }
 
 export interface ProcessingStatus {

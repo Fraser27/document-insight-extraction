@@ -6,7 +6,8 @@ for optimal embedding generation and retrieval using LangChain's RecursiveCharac
 """
 import logging
 from typing import List, Dict
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+#from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 logger = logging.getLogger(__name__)
 

@@ -76,7 +76,7 @@ phases:
       # Build LangChain x86_64 layer
       - echo "Building LangChain x86_64 layer..."
       - mkdir -p langchain-layer-x86_64/python
-      - pip install --target langchain-layer-x86_64/python langchain-text-splitters langchain-core --platform manylinux2014_x86_64 --only-binary=':all:' --python-version 3.12
+      - pip install --target langchain-layer-x86_64/python langchain-text-splitters --platform manylinux2014_x86_64 --only-binary=':all:' --python-version 3.12
       - cd langchain-layer-x86_64
       - zip -r ../langchain-layer-x86_64.zip python
       - cd ..

@@ -30,6 +30,7 @@ EMBED_MODEL_ID = os.environ.get('EMBED_MODEL_ID')
 INSIGHT_MODEL_ID = os.environ.get('INSIGHT_MODEL_ID')
 DYNAMODB_TABLE_NAME = os.environ.get('DYNAMODB_TABLE_NAME')
 REGION = os.environ.get('REGION', 'us-east-1')
+MAX_TOKENS = int(os.environ.get('MAX_TOKENS', '8192'))  # Configurable max tokens for responses
 
 # Initialize components (reused across invocations)
 cache_manager = CacheManager(region=REGION, table_name=DYNAMODB_TABLE_NAME)
@@ -39,7 +40,11 @@ vector_query = VectorQuery(
     index_arn=VECTOR_INDEX_ARN,
     embed_model_id=EMBED_MODEL_ID
 )
-insight_generator = InsightGenerator(region=REGION, model_id=INSIGHT_MODEL_ID)
+insight_generator = InsightGenerator(
+    region=REGION, 
+    model_id=INSIGHT_MODEL_ID,
+    max_tokens=MAX_TOKENS
+)
 
 class CustomJsonEncoder(json.JSONEncoder):
     def default(self, obj):

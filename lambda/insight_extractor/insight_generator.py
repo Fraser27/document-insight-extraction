@@ -15,20 +15,22 @@ logger = logging.getLogger(__name__)
 class InsightGenerator:
     """Generate structured insights using Amazon Bedrock."""
     
-    def __init__(self, region: str, model_id: str):
+    def __init__(self, region: str, model_id: str, max_tokens: int = 8192):
         """
         Initialize insight generator.
         
         Args:
             region: AWS region for Bedrock service
             model_id: Bedrock model ID (e.g., Claude 3 Sonnet)
+            max_tokens: Maximum tokens for response (default: 8192, max for Claude 3: ~8192)
         """
         self.logger = logging.getLogger(__name__)
         self.bedrock_runtime = boto3.client('bedrock-runtime', region_name=region)
         self.model_id = model_id
         
         # Model configuration
-        self.max_tokens = 4096
+        # Increased from 4096 to 8192 to support longer responses (HTML, detailed reports, etc.)
+        self.max_tokens = max_tokens
         self.temperature = 0.0  # Deterministic for consistent results
     
     def generate_insights(
@@ -90,8 +92,35 @@ class InsightGenerator:
             for i, chunk in enumerate(context_chunks)
         ])
         
-        # Create structured prompt
-        prompt = f"""You are an AI assistant that extracts structured insights from documents.
+        # Check if user is requesting a specific format
+        query_lower = user_query.lower()
+        requesting_specific_format = any(
+            keyword in query_lower 
+            for keyword in ['html', 'markdown', 'table', 'list', 'format as', 'generate a']
+        )
+        
+        if requesting_specific_format:
+            # Flexible prompt that allows any format
+            prompt = f"""You are an AI assistant that analyzes documents and provides insights.
+
+Given the following context from a document, respond to the user's query exactly as requested.
+
+USER QUERY:
+{user_query}
+
+DOCUMENT CONTEXT:
+{context}
+
+INSTRUCTIONS:
+1. Analyze the context carefully to answer the user's query
+2. Respond in the exact format requested by the user
+3. Be precise and factual, do not make up information
+4. If information is not found in the context, indicate this clearly
+
+Response:"""
+        else:
+            # Default structured JSON prompt
+            prompt = f"""You are an AI assistant that extracts structured insights from documents.
 
 Given the following context from a document and a user query, extract relevant information and provide a structured JSON response.
 
@@ -202,12 +231,13 @@ JSON Response:"""
     def _parse_response(self, response_text: str) -> Dict[str, Any]:
         """
         Parse and validate JSON response from model.
+        If JSON is not found, return the raw response in a structured format.
         
         Args:
             response_text: Model response text
             
         Returns:
-            Parsed JSON dictionary
+            Parsed JSON dictionary or structured raw response
         """
         try:
             # Try to extract JSON from response
@@ -216,7 +246,9 @@ JSON Response:"""
             json_end = response_text.rfind('}') + 1
             
             if json_start == -1 or json_end == 0:
-                raise ValueError("No JSON found in response")
+                # No JSON found - user may have requested a different format
+                self.logger.info("No JSON found in response, returning raw text")
+                return self._wrap_raw_response(response_text)
             
             json_text = response_text[json_start:json_end]
             
@@ -229,24 +261,48 @@ JSON Response:"""
             return insights
             
         except json.JSONDecodeError as e:
-            self.logger.error(f"Invalid JSON in response: {str(e)}")
+            # JSON parsing failed - user may have requested HTML, markdown, etc.
+            self.logger.info(f"JSON parsing failed, returning raw response: {str(e)}")
             self.logger.debug(f"Response text: {response_text[:500]}")
             
-            # Return error structure
-            return {
-                "summary": "Error parsing model response",
-                "keyPoints": [],
-                "entities": [],
-                "answer": "Unable to parse insights from model response",
-                "confidence": 0.0,
-                "metadata": {
-                    "error": str(e),
-                    "relevance": "unknown"
-                }
-            }
+            # Return raw response wrapped in a structure
+            return self._wrap_raw_response(response_text)
+            
         except Exception as e:
             self.logger.error(f"Error parsing response: {str(e)}")
             raise
+    
+    def _wrap_raw_response(self, response_text: str) -> Dict[str, Any]:
+        """
+        Wrap raw (non-JSON) response in a structured format.
+        This handles cases where users request HTML, markdown, or other formats.
+        
+        Args:
+            response_text: Raw response text
+            
+        Returns:
+            Structured dictionary with raw response
+        """
+        # Detect likely format
+        format_type = "text"
+        if response_text.strip().startswith('<'):
+            format_type = "html"
+        elif '```' in response_text or response_text.startswith('#'):
+            format_type = "markdown"
+        
+        return {
+            "summary": f"Response in {format_type} format",
+            "keyPoints": [],
+            "entities": [],
+            "answer": response_text,  # Full raw response
+            "rawResponse": response_text,  # Also include in rawResponse field
+            "confidence": 1.0,
+            "metadata": {
+                "format": format_type,
+                "isRawResponse": True,
+                "relevance": "custom"
+            }
+        }
     
     def _validate_insights_schema(self, insights: Dict[str, Any]) -> None:
         """

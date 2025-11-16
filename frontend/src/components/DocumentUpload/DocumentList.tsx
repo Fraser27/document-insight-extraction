@@ -70,15 +70,19 @@ export const DocumentList: React.FC<DocumentListProps> = ({
 
   const getStatusIndicator = (document: Document) => {
     const errorCount = document.errorCount || 0;
+    const totalChunks = document.totalChunks || 0;
     
     switch (document.status) {
       case 'processing':
       case 'in-progress':
-        return <StatusIndicator type="in-progress">Processing</StatusIndicator>;
+        const processingText = document.currentPage && document.pageCount
+          ? `Processing (${document.currentPage}/${document.pageCount} pages)`
+          : 'Processing';
+        return <StatusIndicator type="in-progress">{processingText}</StatusIndicator>;
       case 'completed':
         const statusText = errorCount > 0 
-          ? `Completed (${errorCount} error${errorCount > 1 ? 's' : ''})`
-          : 'Completed';
+          ? `Completed (${errorCount} error${errorCount > 1 ? 's' : ''}, ${totalChunks} chunks)`
+          : `Completed (${totalChunks} chunks)`;
         return (
           <StatusIndicator type={errorCount > 0 ? "warning" : "success"}>
             {statusText}

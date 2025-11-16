@@ -18,6 +18,27 @@ export const UploadButton: React.FC<UploadButtonProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [uploadingDocId, setUploadingDocId] = useState<string | null>(null);
 
+  /**
+   * Sanitize filename to remove whitespaces and special characters
+   * Keep only alphanumeric characters, hyphens, underscores, and dots
+   */
+  const sanitizeFilename = (filename: string): string => {
+    // Split filename into name and extension
+    const lastDotIndex = filename.lastIndexOf('.');
+    const name = lastDotIndex > 0 ? filename.substring(0, lastDotIndex) : filename;
+    const extension = lastDotIndex > 0 ? filename.substring(lastDotIndex) : '';
+
+    // Replace whitespaces with underscores and remove special characters
+    const sanitizedName = name
+      .replace(/\s+/g, '_') // Replace whitespaces with underscores
+      .replace(/[^a-zA-Z0-9_-]/g, ''); // Remove special characters, keep alphanumeric, underscore, hyphen
+
+    // Sanitize extension (keep only alphanumeric)
+    const sanitizedExtension = extension.replace(/[^a-zA-Z0-9.]/g, '');
+
+    return sanitizedName + sanitizedExtension;
+  };
+
   const handleFileChange = (files: File[]) => {
     if (files.length > 0) {
       const file = files[0];
@@ -57,8 +78,9 @@ export const UploadButton: React.FC<UploadButtonProps> = ({
 
       // Get presigned URL with connection ID for progress notifications
       const connectionId = websocketService.getConnectionId();
+      const sanitizedFileName = sanitizeFilename(selectedFile.name);
       const presignedUrlResponse = await getPresignedUrl({
-        fileName: selectedFile.name,
+        fileName: sanitizedFileName,
         fileSize: selectedFile.size,
         contentType: selectedFile.type,
         connectionId: connectionId || undefined, // Include connection ID if available

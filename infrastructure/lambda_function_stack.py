@@ -512,6 +512,7 @@ class LambdaFunctionStack(BaseDocumentInsightStack):
                 "DYNAMODB_TABLE_NAME": dynamodb_table_name,
                 "REGION": self.region,
                 "LOG_LEVEL": self.config.get("log_level", "INFO"),
+                "MAX_TOKENS": self.config.get("max_tokens", "8192"),  # Max output tokens for Claude 3.5 Sonnet
             },
             # CloudWatch Logs
             log_group=log_group,

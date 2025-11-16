@@ -41,12 +41,17 @@ export const UploadProgress: React.FC<UploadProgressProps> = ({
   const [processingErrors, setProcessingErrors] = useState<ProcessingError[]>([]);
 
   useEffect(() => {
+    let pollingInterval: ReturnType<typeof setInterval> | null = null;
+    let hasReceivedWebSocketMessage = false;
+
     // Subscribe to WebSocket messages
     const unsubscribe = websocketService.onMessage((message: ProgressMessage) => {
       // Only handle messages for this document
       if (message.docId !== docId) {
         return;
       }
+
+      hasReceivedWebSocketMessage = true;
 
       switch (message.status) {
         case 'processing_started':
@@ -95,9 +100,79 @@ export const UploadProgress: React.FC<UploadProgressProps> = ({
       }
     });
 
-    // Cleanup subscription on unmount
+    // Fallback: Poll for status if WebSocket messages aren't received
+    const startPolling = () => {
+      pollingInterval = setInterval(async () => {
+        try {
+          const config = getConfig();
+          const headers = await getAuthHeaders();
+          const response = await fetch(`${config.apiUrl}/documents/${docId}/status`, {
+            headers,
+          });
+
+          if (response.ok) {
+            const statusData = await response.json();
+            
+            // Update state based on polling data
+            if (statusData.status === 'completed') {
+              setStatus('completed');
+              setProgress(100);
+              setStatusMessage('Processing completed successfully');
+              setTotalPages(statusData.totalPages || null);
+              
+              if (pollingInterval) {
+                clearInterval(pollingInterval);
+              }
+              
+              setTimeout(() => {
+                onComplete?.(docId);
+              }, 2000);
+            } else if (statusData.status === 'failed') {
+              setStatus('error');
+              setErrorMessage(statusData.errorMessage || 'Processing failed');
+              setStatusMessage('Processing failed');
+              
+              if (pollingInterval) {
+                clearInterval(pollingInterval);
+              }
+              
+              onError?.(statusData.errorMessage || 'Processing failed');
+            } else if (statusData.status === 'in-progress') {
+              setStatus('processing');
+              if (statusData.currentPage && statusData.totalPages) {
+                setPagesProcessed(statusData.currentPage);
+                setTotalPages(statusData.totalPages);
+                const progressPercent = (statusData.currentPage / statusData.totalPages) * 100;
+                setProgress(progressPercent);
+                setStatusMessage(
+                  `Processing page ${statusData.currentPage} of ${statusData.totalPages}`
+                );
+              } else {
+                setStatusMessage('Processing in progress...');
+              }
+            }
+          }
+        } catch (error) {
+          console.error('Error polling processing status:', error);
+        }
+      }, 3000); // Poll every 3 seconds
+    };
+
+    // Start polling after 5 seconds if no WebSocket messages received
+    const fallbackTimer = setTimeout(() => {
+      if (!hasReceivedWebSocketMessage) {
+        console.log('No WebSocket messages received, starting polling fallback');
+        startPolling();
+      }
+    }, 5000);
+
+    // Cleanup subscription and polling on unmount
     return () => {
       unsubscribe();
+      clearTimeout(fallbackTimer);
+      if (pollingInterval) {
+        clearInterval(pollingInterval);
+      }
     };
   }, [docId, onComplete, onError]);
 
