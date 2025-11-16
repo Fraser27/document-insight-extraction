@@ -73,6 +73,7 @@ class LambdaLayerStack(Stack):
         # Using x86_64 layers as default for Lambda functions
         self.pypdf_layer_arn = f"arn:aws:lambda:{self.region}:{self.account}:layer:{self.project_name}-pypdf-layer-{self.env_name}-x86-64:1"
         self.boto3_layer_arn = f"arn:aws:lambda:{self.region}:{self.account}:layer:{self.project_name}-boto3-layer-{self.env_name}-x86-64:1"
+        self.langchain_layer_arn = f"arn:aws:lambda:{self.region}:{self.account}:layer:{self.project_name}-langchain-layer-{self.env_name}-x86-64:1"
         
         # Add stack outputs
         self._add_outputs()
@@ -159,7 +160,7 @@ class LambdaLayerStack(Stack):
             self,
             f"lambda_layer_build_{self.env_name}",
             project_name=f"{self.project_name}-lambda-layer-builder-{self.env_name}",
-            description="Build all Lambda layers (pypdf and boto3) for both x86_64 and ARM64",
+            description="Build all Lambda layers (pypdf, boto3, and langchain) for x86_64",
             role=self.codebuild_role,
             environment=codebuild.BuildEnvironment(
                 build_image=codebuild.LinuxBuildImage.STANDARD_7_0,
@@ -224,4 +225,12 @@ class LambdaLayerStack(Stack):
             value=self.boto3_layer_arn,
             description="ARN of boto3 Lambda layer (version 1)",
             export_name=f"{self.stack_name}-Boto3LayerArn"
+        )
+        
+        CfnOutput(
+            self,
+            "LangChainLayerArn",
+            value=self.langchain_layer_arn,
+            description="ARN of LangChain Lambda layer (version 1)",
+            export_name=f"{self.stack_name}-LangChainLayerArn"
         )

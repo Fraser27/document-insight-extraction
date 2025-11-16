@@ -132,7 +132,8 @@ document_processor_lambda = lambda_function_stack.create_document_processor_lamb
     websocket_url="wss-placeholder",  # Will be updated after WebSocket configuration
     processing_status_table_name=processing_status_stack.processing_status_table.table_name,
     pypdf_layer_arn=lambda_layer_stack.pypdf_layer_arn,
-    boto3_layer_arn=lambda_layer_stack.boto3_layer_arn
+    boto3_layer_arn=lambda_layer_stack.boto3_layer_arn,
+    langchain_layer_arn=lambda_layer_stack.langchain_layer_arn
 )
 
 # Configure WebSocket routes with Document Processor Lambda and get the URL

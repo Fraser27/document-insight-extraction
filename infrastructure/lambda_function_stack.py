@@ -68,7 +68,8 @@ class LambdaFunctionStack(BaseDocumentInsightStack):
         websocket_url: str,
         processing_status_table_name: str,
         pypdf_layer_arn: str,
-        boto3_layer_arn: str
+        boto3_layer_arn: str,
+        langchain_layer_arn: str
     ) -> lambda_.Function:
         """
         Create the Document Processing Lambda function.
@@ -81,6 +82,7 @@ class LambdaFunctionStack(BaseDocumentInsightStack):
             processing_status_table_name: DynamoDB table name for processing status tracking
             pypdf_layer_arn: ARN of pypdf Lambda layer
             boto3_layer_arn: ARN of boto3 Lambda layer
+            langchain_layer_arn: ARN of LangChain Lambda layer
             
         Returns:
             Lambda Function construct
@@ -116,6 +118,12 @@ class LambdaFunctionStack(BaseDocumentInsightStack):
             layer_version_arn=boto3_layer_arn
         )
         
+        langchain_layer = lambda_.LayerVersion.from_layer_version_arn(
+            self,
+            "LangChainLayer",
+            layer_version_arn=langchain_layer_arn
+        )
+        
         # Create Lambda function
         self.document_processor_lambda = lambda_.Function(
             self,
@@ -131,7 +139,7 @@ class LambdaFunctionStack(BaseDocumentInsightStack):
             memory_size=self.lambda_memory,
             timeout=Duration.seconds(self.lambda_timeout),
             # Attach layers
-            layers=[pypdf_layer, boto3_layer],
+            layers=[pypdf_layer, boto3_layer, langchain_layer],
             # IAM role
             role=execution_role,
             # Environment variables

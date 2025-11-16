@@ -102,6 +102,7 @@ export interface ProcessingStatus {
   completedAt?: number;
   failedAt?: number;
   errorMessage?: string;
+  errorCount:number;
   totalChunks?: number;
   progressMessage?: string;
 }
