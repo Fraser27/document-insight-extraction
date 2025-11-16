@@ -152,6 +152,7 @@ class LambdaFunctionStack(BaseDocumentInsightStack):
                 "DYNAMODB_TABLE_NAME": processing_status_table_name,
                 "REGION": self.region,
                 "LOG_LEVEL": self.config.get("log_level", "INFO"),
+                "OCR_MODEL_ID": self.config.get("ocr_model_id", "INFO"),
             },
             # CloudWatch Logs
             log_group=log_group,
@@ -498,7 +499,7 @@ class LambdaFunctionStack(BaseDocumentInsightStack):
             code=lambda_.Code.from_asset("lambda/insight_extractor"),
             # Memory and timeout configuration
             memory_size=self.lambda_memory,
-            timeout=Duration.seconds(300),  # 5 minutes for insight extraction
+            timeout=Duration.seconds(600),  # 5 minutes for insight extraction
             # Attach layer
             layers=[boto3_layer],
             # IAM role
@@ -512,7 +513,7 @@ class LambdaFunctionStack(BaseDocumentInsightStack):
                 "DYNAMODB_TABLE_NAME": dynamodb_table_name,
                 "REGION": self.region,
                 "LOG_LEVEL": self.config.get("log_level", "INFO"),
-                "MAX_TOKENS": self.config.get("max_tokens", "8192"),  # Max output tokens for Claude 3.5 Sonnet
+                "MAX_TOKENS": self.config.get("max_tokens", "50000"),  # Max output tokens for Claude 3.5 Sonnet
             },
             # CloudWatch Logs
             log_group=log_group,

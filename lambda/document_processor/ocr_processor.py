@@ -3,6 +3,7 @@ OCR Processing Module
 
 This module provides functionality to perform OCR on images using Amazon Bedrock.
 """
+import os
 import logging
 import json
 import base64
@@ -24,8 +25,8 @@ class OCRProcessor:
         """
         self.logger = logging.getLogger(__name__)
         self.bedrock_runtime = boto3.client('bedrock-runtime', region_name=region)
-        # Use Claude 3 for OCR capabilities
-        self.ocr_model_id = "anthropic.claude-3-sonnet-20240229-v1:0"
+        # Use Claude 4.5 for OCR capabilities
+        self.ocr_model_id = os.environ.get('OCR_MODEL_ID', 'global.anthropic.claude-sonnet-4-5-20250929-v1:0')
     
     def perform_ocr(self, image_data: bytes, image_format: str = "JPEG") -> str:
         """
@@ -45,10 +46,10 @@ class OCRProcessor:
             # Encode image to base64
             image_base64 = base64.b64encode(image_data).decode('utf-8')
             
-            # Prepare request for Claude 3
+            # Prepare request for Claude 4.5 Sonnet
             request_body = {
                 "anthropic_version": "bedrock-2023-05-31",
-                "max_tokens": 4096,
+                "max_tokens": 8192,
                 "messages": [
                     {
                         "role": "user",
