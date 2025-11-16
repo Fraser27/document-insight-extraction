@@ -6,14 +6,15 @@ including CORS configuration, event notifications, and vector search capabilitie
 """
 from aws_cdk import (
     aws_s3 as s3,
-    aws_lambda as lambda_,
-    aws_s3_notifications as s3n,
+    aws_iam as iam,
     CfnOutput,
     RemovalPolicy,
+    Duration,
 )
+from aws_cdk import aws_s3vectors as s3vectors
 from constructs import Construct
 from infrastructure.base_stack import BaseDocumentInsightStack
-from typing import Optional
+
 
 
 class S3BucketStack(BaseDocumentInsightStack):
@@ -23,7 +24,7 @@ class S3BucketStack(BaseDocumentInsightStack):
     Creates:
     - S3 bucket for document storage with CORS configuration
     - S3 Vector bucket for embeddings with metadata filtering
-    - Event notifications for Lambda triggers
+    Note: Event notifications are configured in the Lambda Function stack
     """
 
     def __init__(
@@ -49,11 +50,13 @@ class S3BucketStack(BaseDocumentInsightStack):
         # Create document storage bucket
         self.documents_bucket = self._create_documents_bucket()
         
-        # Create vector storage bucket
-        self.vector_bucket = self._create_vector_bucket()
+        # Create vector storage bucket and index
+        self.vector_bucket, self.vector_index = self._create_vector_bucket_and_index()
         
-        # Store Lambda functions for event notifications (set later)
-        self.document_processor_lambda: Optional[lambda_.IFunction] = None
+
+        
+        # Export properties for other stacks
+        self.vector_index_arn = self.vector_index.attr_index_arn
         
         # Export outputs
         self._create_outputs()
@@ -88,7 +91,7 @@ class S3BucketStack(BaseDocumentInsightStack):
         bucket = s3.Bucket(
             self,
             "DocumentsBucket",
-            bucket_name=f"{self.documents_bucket_name}-{self.region}",
+            bucket_name=self.documents_bucket_name,
             # Versioning disabled for cost optimization
             versioned=False,
             # Encryption at rest
@@ -103,11 +106,10 @@ class S3BucketStack(BaseDocumentInsightStack):
             # Lifecycle rules for cost optimization
             lifecycle_rules=[
                 s3.LifecycleRule(
-                    id="DeleteOldDocuments",
+                    id="CleanupIncompleteUploads",
                     enabled=True,
-                    expiration=None,  # No automatic expiration by default
-                    abort_incomplete_multipart_upload_after=None,
-                    noncurrent_version_expiration=None
+                    # Clean up incomplete multipart uploads after 7 days
+                    abort_incomplete_multipart_upload_after=Duration.days(7)
                 )
             ],
             # Enable server access logging (optional)
@@ -118,110 +120,65 @@ class S3BucketStack(BaseDocumentInsightStack):
 
         return bucket
 
-    def _create_vector_bucket(self) -> s3.CfnBucket:
+    def _create_vector_bucket_and_index(self) -> tuple[s3vectors.CfnVectorBucket, s3vectors.CfnIndex]:
         """
-        Create S3 Vector bucket for embeddings with metadata filtering.
+        Create S3 Vector bucket and index for embeddings with metadata filtering.
         
-        Uses CfnBucket to create a VECTORSEARCH type bucket with vector index
-        configuration for semantic search capabilities.
+        Uses the aws-s3vectors L1 CloudFormation constructs to create a vector search 
+        bucket with index configuration for semantic search capabilities.
         
         Returns:
-            S3 CfnBucket construct
+            Tuple of (CfnVectorBucket, CfnIndex) constructs
         """
         # Get vector dimensions from config
         vector_dimensions = self.config.get("vector_dimensions", 1024)
         
-        # Create vector bucket using L1 construct for VECTORSEARCH type
-        vector_bucket = s3.CfnBucket(
+        # Create vector bucket using L1 CloudFormation construct
+        vector_bucket = s3vectors.CfnVectorBucket(
             self,
             "VectorBucket",
-            bucket_name=f"{self.vector_bucket_name}-{self.region}",
-            # Vector search bucket type
-            bucket_type="VECTORSEARCH",
-            # Vector index configuration
-            vector_configuration=s3.CfnBucket.VectorConfigurationProperty(
-                dimensions=vector_dimensions,
-                # Cosine similarity for semantic search
-                distance_metric="COSINE",
-                # Filterable metadata keys for document-specific queries
-                filterable_metadata_keys=[
-                    "docId",
-                    "pageRange",
-                    "uploadTimestamp"
-                ],
-                # Non-filterable metadata for context retrieval
-                non_filterable_metadata_keys=[
-                    "textChunk"
-                ]
-            ),
-            # Public access configuration
-            public_access_block_configuration=s3.CfnBucket.PublicAccessBlockConfigurationProperty(
-                block_public_acls=True,
-                block_public_policy=True,
-                ignore_public_acls=True,
-                restrict_public_buckets=True
-            ),
-            # Encryption configuration
-            bucket_encryption=s3.CfnBucket.BucketEncryptionProperty(
-                server_side_encryption_configuration=[
-                    s3.CfnBucket.ServerSideEncryptionRuleProperty(
-                        server_side_encryption_by_default=s3.CfnBucket.ServerSideEncryptionByDefaultProperty(
-                            sse_algorithm="AES256"
-                        ),
-                        bucket_key_enabled=True
-                    )
-                ]
+            vector_bucket_name=self.vector_bucket_name,
+            # Encryption configuration (optional) - uses AES256 by default
+            encryption_configuration=s3vectors.CfnVectorBucket.EncryptionConfigurationProperty(
+                sse_type="AES256"  # Amazon S3 managed keys (default)
             )
         )
         
         # Apply removal policy
         vector_bucket.apply_removal_policy(self.removal_policy)
         
-        return vector_bucket
+        # Create vector index for semantic search
+        vector_index = s3vectors.CfnIndex(
+            self,
+            "VectorIndex",
+            vector_bucket_name=self.vector_bucket_name,
+            index_name="docs",
+            # Vector configuration
+            dimension=vector_dimensions,
+            data_type="float32",
+            # Cosine similarity for semantic search (best for text embeddings)
+            distance_metric="cosine",
+            # Metadata configuration for filtering
+            # Note: All metadata keys are filterable by default except those specified as non-filterable
+            metadata_configuration=s3vectors.CfnIndex.MetadataConfigurationProperty(
+                non_filterable_metadata_keys=[
+                    "textChunk",       # Original text content (large, not for filtering)
+                    "fileName",        # Original file name (for display only)
+                    "processingDate"   # When chunk was processed (for display only)
+                ]
+                # Filterable keys (default): docId, pageRange, uploadTimestamp, chunkIndex
+            )
+        )
+        
+        # Ensure vector index waits for vector bucket to be created
+        vector_index.add_dependency(vector_bucket)
+        
+        # Apply removal policy
+        vector_index.apply_removal_policy(self.removal_policy)
+        
+        return vector_bucket, vector_index
 
-    def configure_event_notifications(
-        self,
-        document_processor_lambda: lambda_.IFunction
-    ) -> None:
-        """
-        Configure S3 event notifications to trigger Lambda functions.
-        
-        Sets up notifications for:
-        - OBJECT_CREATED events -> Document Processing Lambda
-        - OBJECT_REMOVED_DELETE events -> Document Processing Lambda (cleanup)
-        
-        Args:
-            document_processor_lambda: Lambda function to process documents
-        """
-        self.document_processor_lambda = document_processor_lambda
-        
-        # Add Lambda destination for OBJECT_CREATED events
-        self.documents_bucket.add_event_notification(
-            s3.EventType.OBJECT_CREATED,
-            s3n.LambdaDestination(document_processor_lambda),
-            s3.NotificationKeyFilter(
-                prefix="",
-                suffix=".pdf"
-            )
-        )
-        
-        # Add Lambda destination for OBJECT_REMOVED_DELETE events
-        self.documents_bucket.add_event_notification(
-            s3.EventType.OBJECT_REMOVED_DELETE,
-            s3n.LambdaDestination(document_processor_lambda),
-            s3.NotificationKeyFilter(
-                prefix="",
-                suffix=".pdf"
-            )
-        )
-        
-        # Grant S3 service principal permission to invoke Lambda
-        document_processor_lambda.add_permission(
-            "AllowS3Invocation",
-            principal=lambda_.ServicePrincipal("s3.amazonaws.com"),
-            source_arn=self.documents_bucket.bucket_arn,
-            action="lambda:InvokeFunction"
-        )
+
 
     def _create_outputs(self) -> None:
         """Create CloudFormation outputs for bucket names and ARNs."""
@@ -250,16 +207,22 @@ class S3BucketStack(BaseDocumentInsightStack):
         
         self.add_stack_output(
             "VectorBucketArn",
-            value=self.vector_bucket.attr_arn,
+            value=self.vector_bucket.attr_vector_bucket_arn,
             description="S3 Vector bucket ARN for embeddings",
             export_name=f"{self.stack_name}-VectorBucketArn"
         )
         
-        # Vector index ARN (constructed from bucket ARN)
-        vector_index_arn = f"{self.vector_bucket.attr_arn}/index/*"
+        # Vector index outputs
         self.add_stack_output(
             "VectorIndexArn",
-            value=vector_index_arn,
+            value=self.vector_index.attr_index_arn,
             description="S3 Vector index ARN for queries",
             export_name=f"{self.stack_name}-VectorIndexArn"
+        )
+        
+        self.add_stack_output(
+            "VectorIndexName",
+            value=self.vector_index.ref,
+            description="S3 Vector index name",
+            export_name=f"{self.stack_name}-VectorIndexName"
         )

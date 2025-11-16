@@ -8,7 +8,7 @@ import logging
 import json
 import boto3
 from typing import List
-
+from decimal import Decimal
 logger = logging.getLogger(__name__)
 
 
@@ -123,7 +123,7 @@ class EmbeddingGenerator:
                 # Re-raise to fail fast
                 raise
         
-        self.logger.info(f"Generated {len(embeddings)} embeddings")
+        print(f"Generated {len(embeddings)} embeddings")
         return embeddings
     
     def validate_embedding(self, embedding: List[float]) -> bool:

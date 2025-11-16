@@ -1,22 +1,54 @@
 import { TopNavigation } from '@cloudscape-design/components';
-import { useNavigate } from 'react-router-dom';
-import { signOut, getCurrentUser } from '../../services/auth';
+import { useAuthenticator } from '@aws-amplify/ui-react';
 import { useEffect, useState } from 'react';
+import { getCurrentUserInfo, signOut as authSignOut } from '../../services/auth';
 
 export const Header: React.FC = () => {
-  const navigate = useNavigate();
+  const { signOut, user } = useAuthenticator();
   const [username, setUsername] = useState<string>('');
 
   useEffect(() => {
-    const user = getCurrentUser();
-    if (user) {
-      setUsername(user.getUsername());
-    }
-  }, []);
+    const loadUserInfo = async () => {
+      try {
+        const userInfo = await getCurrentUserInfo();
+        if (userInfo) {
+          setUsername(userInfo.username || userInfo.signInDetails?.loginId || 'User');
+        } else if (user) {
+          setUsername(user.username || 'User');
+        }
+      } catch (error) {
+        console.error('Error loading user info:', error);
+        if (user) {
+          setUsername(user.username || 'User');
+        }
+      }
+    };
 
-  const handleSignOut = () => {
-    signOut();
-    navigate('/login');
+    loadUserInfo();
+  }, [user]);
+
+  const handleSignOut = async () => {
+    try {
+      // Try using the auth service first
+      await authSignOut();
+    } catch (error) {
+      console.error('Error with auth service signOut, trying authenticator signOut:', error);
+      try {
+        // Fallback to authenticator signOut
+        signOut();
+      } catch (fallbackError) {
+        console.error('Both signOut methods failed, using clearAuthState:', fallbackError);
+        // Final fallback - use the global clear function
+        if ((window as any).clearAuthState) {
+          (window as any).clearAuthState();
+        } else {
+          // Manual cleanup
+          localStorage.clear();
+          sessionStorage.clear();
+          window.location.reload();
+        }
+      }
+    }
   };
 
   return (

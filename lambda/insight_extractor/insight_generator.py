@@ -8,7 +8,7 @@ import logging
 import json
 import boto3
 from typing import List, Dict, Any
-
+from decimal import Decimal
 logger = logging.getLogger(__name__)
 
 
@@ -50,7 +50,7 @@ class InsightGenerator:
             # Format prompt with context
             prompt = self._format_prompt(user_query, context_chunks)
             
-            self.logger.info(
+            print(
                 f"Generating insights with {len(context_chunks)} chunks, "
                 f"prompt length: {len(prompt)} chars"
             )
@@ -61,7 +61,7 @@ class InsightGenerator:
             # Parse and validate JSON response
             insights = self._parse_response(response)
             
-            self.logger.info("Successfully generated insights")
+            print("Successfully generated insights")
             
             return insights
             

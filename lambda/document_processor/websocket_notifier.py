@@ -9,9 +9,17 @@ import json
 import boto3
 from typing import Dict, Any
 from urllib.parse import urlparse
-
+from decimal import Decimal
 logger = logging.getLogger(__name__)
 
+class CustomJsonEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, Decimal):
+            if float(obj).is_integer():
+                return int(float(obj))
+            else:
+                return float(obj)
+        return super(CustomJsonEncoder, self).default(obj)
 
 class WebSocketNotifier:
     """Send progress updates via WebSocket API Gateway."""
@@ -45,7 +53,7 @@ class WebSocketNotifier:
             region_name=region
         )
         
-        self.logger.info(f"WebSocket notifier initialized for API: {self.api_id}")
+        print(f"WebSocket notifier initialized for API: {self.api_id}")
     
     def send_message(self, connection_id: str, message: Dict[str, Any]) -> bool:
         """
@@ -60,7 +68,7 @@ class WebSocketNotifier:
         """
         try:
             # Convert message to JSON
-            message_json = json.dumps(message)
+            message_json = json.dumps(message, cls=CustomJsonEncoder)
             
             # Post to connection
             self.apigw_management.post_to_connection(
@@ -244,7 +252,7 @@ class WebSocketNotifier:
                         connection_id = metadata.get('connection-id')
                         
                         if connection_id:
-                            self.logger.info(f"Found connection ID: {connection_id}")
+                            print(f"Found connection ID: {connection_id}")
                             return connection_id
         except Exception as e:
             self.logger.warning(f"Error extracting connection ID: {str(e)}")

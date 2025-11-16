@@ -6,9 +6,10 @@ import {
   Button,
   StatusIndicator,
   Header,
+  ProgressBar,
 } from '@cloudscape-design/components';
-import { listDocuments } from '../../services/api';
-import type { Document } from '../../types/document';
+import { listDocuments, getProcessingStatus } from '../../services/api';
+import type { Document, ProcessingStatus } from '../../services/api';
 
 interface DocumentListProps {
   refreshTrigger?: number;
@@ -22,6 +23,7 @@ export const DocumentList: React.FC<DocumentListProps> = ({
   const [documents, setDocuments] = useState<Document[]>([]);
   const [loading, setLoading] = useState(false);
   const [selectedItems, setSelectedItems] = useState<Document[]>([]);
+  const [processingStatuses, setProcessingStatuses] = useState<Map<string, ProcessingStatus>>(new Map());
 
   const fetchDocuments = async () => {
     setLoading(true);
@@ -29,6 +31,22 @@ export const DocumentList: React.FC<DocumentListProps> = ({
     try {
       const docs = await listDocuments();
       setDocuments(docs);
+      
+      // Fetch detailed processing status for documents that are processing
+      const statusMap = new Map<string, ProcessingStatus>();
+      
+      for (const doc of docs) {
+        if (doc.status === 'processing' || doc.status === 'in-progress') {
+          try {
+            const status = await getProcessingStatus(doc.docId);
+            statusMap.set(doc.docId, status);
+          } catch (err) {
+            console.warn(`Failed to get status for ${doc.docId}:`, err);
+          }
+        }
+      }
+      
+      setProcessingStatuses(statusMap);
     } catch (err) {
       console.error('Failed to load documents:', err);
     } finally {
@@ -39,6 +57,22 @@ export const DocumentList: React.FC<DocumentListProps> = ({
   useEffect(() => {
     fetchDocuments();
   }, [refreshTrigger]);
+
+  // Auto-refresh processing documents every 5 seconds
+  useEffect(() => {
+    const hasProcessingDocs = documents.some(doc => 
+      doc.status === 'processing' || doc.status === 'in-progress' ||
+      processingStatuses.get(doc.docId)?.status === 'in-progress'
+    );
+
+    if (hasProcessingDocs) {
+      const interval = setInterval(() => {
+        fetchDocuments();
+      }, 5000); // Refresh every 5 seconds
+
+      return () => clearInterval(interval);
+    }
+  }, [documents, processingStatuses]);
 
   const formatDate = (dateString: string): string => {
     const date = new Date(dateString);
@@ -53,9 +87,62 @@ export const DocumentList: React.FC<DocumentListProps> = ({
     return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
   };
 
-  const getStatusIndicator = (status: Document['status']) => {
-    switch (status) {
+  const getStatusIndicator = (document: Document) => {
+    const processingStatus = processingStatuses.get(document.docId);
+    
+    if (processingStatus) {
+      switch (processingStatus.status) {
+        case 'in-progress':
+          const progress = processingStatus.totalPages && processingStatus.currentPage 
+            ? (processingStatus.currentPage / processingStatus.totalPages) * 100 
+            : 0;
+          
+          const inProgressErrorCount = processingStatus.errorCount || 0;
+          const pagesText = `${processingStatus.currentPage || 0}/${processingStatus.totalPages || 0} pages`;
+          const inProgressStatusText = inProgressErrorCount > 0
+            ? `${pagesText}, ${inProgressErrorCount} error${inProgressErrorCount > 1 ? 's' : ''}`
+            : pagesText;
+          
+          return (
+            <SpaceBetween size="xs">
+              <StatusIndicator type={inProgressErrorCount > 0 ? "warning" : "in-progress"}>
+                Processing ({inProgressStatusText})
+              </StatusIndicator>
+              {processingStatus.totalPages && (
+                <ProgressBar
+                  value={progress}
+                  additionalInfo={processingStatus.progressMessage || ''}
+                  description="Processing progress"
+                  status={inProgressErrorCount > 0 ? "error" : "in-progress"}
+                />
+              )}
+            </SpaceBetween>
+          );
+        case 'completed':
+          const errorCount = processingStatus.errorCount || 0;
+          const chunksText = `${processingStatus.totalChunks || 0} chunks`;
+          const statusText = errorCount > 0 
+            ? `${chunksText}, ${errorCount} error${errorCount > 1 ? 's' : ''}`
+            : chunksText;
+          
+          return (
+            <StatusIndicator type={errorCount > 0 ? "warning" : "success"}>
+              Completed ({statusText})
+            </StatusIndicator>
+          );
+        case 'failed':
+          return (
+            <StatusIndicator type="error">
+              Failed: {processingStatus.errorMessage || 'Unknown error'}
+            </StatusIndicator>
+          );
+      }
+    }
+    
+    // Fallback to document status
+    switch (document.status) {
       case 'processing':
+      case 'in-progress':
         return <StatusIndicator type="in-progress">Processing</StatusIndicator>;
       case 'completed':
         return <StatusIndicator type="success">Completed</StatusIndicator>;
@@ -96,7 +183,7 @@ export const DocumentList: React.FC<DocumentListProps> = ({
         {
           id: 'status',
           header: 'Status',
-          cell: (item) => getStatusIndicator(item.status),
+          cell: (item) => getStatusIndicator(item),
           sortingField: 'status',
         },
       ]}

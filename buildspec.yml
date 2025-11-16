@@ -1,32 +1,25 @@
 version: 0.2
 
-# CodeBuild buildspec for Lambda layers and deployment
-# This will be used to build Lambda layers with dependencies
-
 phases:
   install:
     runtime-versions:
+      nodejs: 22
       python: 3.12
     commands:
-      - echo "Installing build dependencies..."
-      - pip install --upgrade pip
-      
-  pre_build:
-    commands:
-      - echo "Pre-build phase started on `date`"
-      - echo "Installing CDK dependencies..."
+      - echo Installing dependencies...
+      - npm install -g aws-cdk@2.1031.2
       - pip install -r requirements.txt
       
   build:
     commands:
-      - echo "Build phase started on `date`"
-      - echo "This buildspec will be used for Lambda layer creation in future tasks"
-      
+      - echo Running builder script...
+      - chmod +x builder-nointeractive.sh
+      - ./builder-nointeractive.sh dev
+  
   post_build:
     commands:
-      - echo "Build completed on `date`"
-
+      - echo Build completed on `date`
+      
 artifacts:
   files:
     - '**/*'
-  name: document-insight-build-$(date +%Y%m%d-%H%M%S)

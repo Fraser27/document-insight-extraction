@@ -23,9 +23,11 @@ from infrastructure.cognito_stack import CognitoAuthStack
 from infrastructure.s3_stack import S3BucketStack
 from infrastructure.lambda_layer_stack import LambdaLayerStack
 from infrastructure.dynamodb_stack import DynamoDBStack
-from infrastructure.websocket_api_stack import WebSocketApiStack
+from infrastructure.processing_status_stack import ProcessingStatusStack
+
 from infrastructure.lambda_function_stack import LambdaFunctionStack
 from infrastructure.api_gateway_stack import ApiGatewayStack
+from infrastructure.ecr_stack import ECRStack
 from infrastructure.apprunner_hosting_stack import AppRunnerHostingStack
 
 # Initialize CDK app
@@ -96,19 +98,19 @@ dynamodb_stack = DynamoDBStack(
 )
 
 # ============================================================================
-# STEP 5: Create WebSocket API stack (real-time progress updates)
+# STEP 4b: Create Processing Status DynamoDB stack
 # ============================================================================
-websocket_api_stack = WebSocketApiStack(
+processing_status_stack = ProcessingStatusStack(
     app,
-    f"DocumentInsightWebSocket{env_name.capitalize()}Stack",
+    f"DocumentInsightProcessingStatus{env_name.capitalize()}Stack",
     env=env,
     env_name=env_name,
     config=config,
-    description=f"Document Insight Extraction System - WebSocket API - {env_name} environment"
+    description=f"Document Insight Extraction System - Processing Status Table - {env_name} environment"
 )
 
 # ============================================================================
-# STEP 6: Create Lambda Function stack (document processor and insight extractor)
+# STEP 5: Create Lambda Function stack (document processor and insight extractor)
 # ============================================================================
 lambda_function_stack = LambdaFunctionStack(
     app,
@@ -119,26 +121,38 @@ lambda_function_stack = LambdaFunctionStack(
     description=f"Document Insight Extraction System - Lambda Functions - {env_name} environment"
 )
 
-# Create Document Processing Lambda
+# Create WebSocket API first (without routes)
+websocket_api = lambda_function_stack.create_websocket_api()
+
+# Create Document Processing Lambda with WebSocket URL placeholder
 document_processor_lambda = lambda_function_stack.create_document_processor_lambda(
-    documents_bucket=s3_stack.documents_bucket,
+    documents_bucket_name=s3_stack.documents_bucket.bucket_name,
     vector_bucket_name=s3_stack.vector_bucket_name,
     vector_index_arn=s3_stack.vector_index_arn,
-    websocket_url=websocket_api_stack.websocket_url,
+    websocket_url="wss-placeholder",  # Will be updated after WebSocket configuration
+    processing_status_table_name=processing_status_stack.processing_status_table.table_name,
     pypdf_layer_arn=lambda_layer_stack.pypdf_layer_arn,
     boto3_layer_arn=lambda_layer_stack.boto3_layer_arn
 )
 
-# Grant WebSocket permissions to Document Processor
-lambda_function_stack.grant_websocket_permissions(
-    websocket_api_arn=f"arn:aws:execute-api:{region}:{account_id}:{websocket_api_stack.websocket_api_id}/*"
+# Configure WebSocket routes with Document Processor Lambda and get the URL
+websocket_url = lambda_function_stack.configure_websocket_routes(document_processor_lambda, websocket_api)
+
+# Update Document Processor Lambda with actual WebSocket URL
+document_processor_lambda.add_environment("WSS_URL", websocket_url)
+
+# Create Document API Lambda
+document_api_lambda = lambda_function_stack.create_document_api_lambda(
+    documents_bucket_name=s3_stack.documents_bucket.bucket_name,
+    processing_status_table_name=processing_status_stack.processing_status_table.table_name,
+    boto3_layer_arn=lambda_layer_stack.boto3_layer_arn
 )
 
 # Create Insight Extraction Lambda
 insight_extractor_lambda = lambda_function_stack.create_insight_extractor_lambda(
     vector_bucket_name=s3_stack.vector_bucket_name,
     vector_index_arn=s3_stack.vector_index_arn,
-    dynamodb_table_name=dynamodb_stack.cache_table.table_name,
+    dynamodb_table_name=dynamodb_stack.insights_cache_table.table_name,
     boto3_layer_arn=lambda_layer_stack.boto3_layer_arn
 )
 
@@ -153,17 +167,15 @@ lambda_function_stack.grant_insight_extractor_bedrock_permissions()
 
 # Grant DynamoDB permissions to Insight Extractor
 lambda_function_stack.grant_insight_extractor_dynamodb_permissions(
-    dynamodb_table_arn=dynamodb_stack.cache_table.table_arn
+    dynamodb_table_arn=dynamodb_stack.insights_cache_table.table_arn
 )
 
 # Configure S3 event notifications to trigger Document Processor
-s3_stack.configure_event_notifications(document_processor_lambda)
-
-# Configure WebSocket Lambda integrations
-websocket_api_stack.configure_lambda_integrations(document_processor_lambda)
+# Note: This is done in the Lambda Function stack to avoid cyclic dependencies
+#lambda_function_stack.configure_s3_event_notifications(s3_stack.documents_bucket)
 
 # ============================================================================
-# STEP 7: Create API Gateway stack (REST endpoints)
+# STEP 6: Create API Gateway stack (REST endpoints)
 # ============================================================================
 api_gateway_stack = ApiGatewayStack(
     app,
@@ -172,14 +184,23 @@ api_gateway_stack = ApiGatewayStack(
     env_name=env_name,
     config=config,
     cognito_user_pool=cognito_stack.user_pool,
+    insight_extractor_arn=insight_extractor_lambda.function_arn,
+    document_processor_arn=document_processor_lambda.function_arn,
+    document_api_arn=document_api_lambda.function_arn,
     description=f"Document Insight Extraction System - API Gateway - {env_name} environment"
 )
 
-# Configure API Gateway endpoints
-# Note: Presigned URL and Document List endpoints would be configured here
-# when those Lambda functions are implemented
-api_gateway_stack.configure_insight_extraction_endpoint(insight_extractor_lambda)
-api_gateway_stack.configure_insight_retrieval_endpoint(insight_extractor_lambda)
+# ============================================================================
+# STEP 7: Create ECR stack (Docker image repository and build)
+# ============================================================================
+ecr_stack = ECRStack(
+    app,
+    f"DocumentInsightECR{env_name.capitalize()}Stack",
+    env=env,
+    env_name=env_name,
+    config=config,
+    description=f"Document Insight Extraction System - ECR Repository - {env_name} environment"
+)
 
 # ============================================================================
 # STEP 8: Create AppRunner hosting stack (frontend)
@@ -191,29 +212,34 @@ apprunner_stack = AppRunnerHostingStack(
     env_name=env_name,
     config=config,
     api_endpoint=api_gateway_stack.rest_api.url,
-    wss_endpoint=websocket_api_stack.websocket_url,
+    wss_endpoint=websocket_url,
     user_pool_id=cognito_stack.user_pool.user_pool_id,
     user_pool_client_id=cognito_stack.user_pool_client.user_pool_client_id,
+    ecr_repository_uri=ecr_stack.ecr_repository.repository_uri,
     description=f"Document Insight Extraction System - AppRunner Hosting - {env_name} environment"
 )
 
 # ============================================================================
 # Configure stack dependencies
 # ============================================================================
-# Lambda Function stack depends on S3, Lambda Layers, DynamoDB, and WebSocket
+# Lambda Function stack depends on S3, Lambda Layers, DynamoDB, and Processing Status
 lambda_function_stack.add_dependency(s3_stack)
 lambda_function_stack.add_dependency(lambda_layer_stack)
 lambda_function_stack.add_dependency(dynamodb_stack)
-lambda_function_stack.add_dependency(websocket_api_stack)
+lambda_function_stack.add_dependency(processing_status_stack)
+# Removed WebSocket dependency to avoid cyclic reference
 
 # API Gateway stack depends on Cognito and Lambda Functions
 api_gateway_stack.add_dependency(cognito_stack)
 api_gateway_stack.add_dependency(lambda_function_stack)
 
-# AppRunner stack depends on API Gateway, WebSocket, and Cognito
+# ECR stack is independent (no dependencies)
+
+# AppRunner stack depends on API Gateway, Lambda Functions (includes WebSocket), Cognito, and ECR
 apprunner_stack.add_dependency(api_gateway_stack)
-apprunner_stack.add_dependency(websocket_api_stack)
+apprunner_stack.add_dependency(lambda_function_stack)
 apprunner_stack.add_dependency(cognito_stack)
+apprunner_stack.add_dependency(ecr_stack)
 
 # ============================================================================
 # Apply common tags to all stacks
@@ -223,9 +249,10 @@ all_stacks = [
     s3_stack,
     lambda_layer_stack,
     dynamodb_stack,
-    websocket_api_stack,
-    lambda_function_stack,
+    processing_status_stack,
+    lambda_function_stack,  # Now includes WebSocket API
     api_gateway_stack,
+    ecr_stack,
     apprunner_stack
 ]
 

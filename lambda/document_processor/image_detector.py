@@ -6,8 +6,8 @@ This module provides functionality to detect images in PDF pages.
 import logging
 from typing import List, Dict
 from io import BytesIO
-from PyPDF2 import PdfReader
-
+from pypdf import PdfReader
+from decimal import Decimal
 logger = logging.getLogger(__name__)
 
 
@@ -39,26 +39,18 @@ class ImageDetector:
             
             page = reader.pages[page_num]
             
-            # Check if page has XObject resources (images)
-            if '/Resources' in page:
-                resources = page['/Resources']
-                if '/XObject' in resources:
-                    xobjects = resources['/XObject']
-                    if xobjects:
-                        # Check if any XObject is an image
-                        for obj_name in xobjects:
-                            obj = xobjects[obj_name]
-                            if obj.get('/Subtype') == '/Image':
-                                self.logger.debug(f"Page {page_num} contains images")
-                                return True
+            # Use pypdf's built-in images property
+            has_imgs = len(page.images) > 0
+            if has_imgs:
+                self.logger.debug(f"Page {page_num} contains {len(page.images)} images")
             
-            return False
+            return has_imgs
             
         except Exception as e:
             self.logger.warning(f"Error detecting images on page {page_num}: {str(e)}")
             return False
     
-    def extract_images(self, pdf_bytes: bytes, page_num: int) -> List[Dict[str, any]]:
+    def extract_images(self, pdf_bytes: bytes, page_num: int) -> List[bytes]:
         """
         Extract images from a PDF page.
         
@@ -67,15 +59,7 @@ class ImageDetector:
             page_num: Page number (0-indexed)
             
         Returns:
-            List of dictionaries containing image data:
-            [
-                {
-                    "name": "image_name",
-                    "data": b"image_bytes",
-                    "format": "JPEG" or "PNG" or other
-                },
-                ...
-            ]
+            List of image data as bytes (ready for OCR processing)
         """
         images = []
         
@@ -89,47 +73,21 @@ class ImageDetector:
             
             page = reader.pages[page_num]
             
-            # Extract images from XObject resources
-            if '/Resources' in page:
-                resources = page['/Resources']
-                if '/XObject' in resources:
-                    xobjects = resources['/XObject']
+            # Use pypdf's built-in images property
+            for image_file_object in page.images:
+                try:
+                    # Get image data directly
+                    image_data = image_file_object.data
+                    images.append(image_data)
                     
-                    for obj_name in xobjects:
-                        obj = xobjects[obj_name]
-                        
-                        # Check if XObject is an image
-                        if obj.get('/Subtype') == '/Image':
-                            try:
-                                # Get image data
-                                image_data = obj.get_data()
-                                
-                                # Determine image format
-                                image_format = "UNKNOWN"
-                                if '/Filter' in obj:
-                                    filter_type = obj['/Filter']
-                                    if filter_type == '/DCTDecode':
-                                        image_format = "JPEG"
-                                    elif filter_type == '/FlateDecode':
-                                        image_format = "PNG"
-                                    elif filter_type == '/JPXDecode':
-                                        image_format = "JPEG2000"
-                                
-                                images.append({
-                                    "name": str(obj_name),
-                                    "data": image_data,
-                                    "format": image_format
-                                })
-                                
-                                self.logger.debug(
-                                    f"Extracted image {obj_name} ({image_format}) "
-                                    f"from page {page_num}"
-                                )
-                                
-                            except Exception as e:
-                                self.logger.warning(
-                                    f"Error extracting image {obj_name} from page {page_num}: {str(e)}"
-                                )
+                    self.logger.debug(
+                        f"Extracted image from page {page_num}, size: {len(image_data)} bytes"
+                    )
+                    
+                except Exception as e:
+                    self.logger.warning(
+                        f"Error extracting image from page {page_num}: {str(e)}"
+                    )
             
             self.logger.info(f"Extracted {len(images)} images from page {page_num}")
             return images

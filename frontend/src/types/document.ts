@@ -3,7 +3,7 @@ export interface Document {
   fileName: string;
   uploadDate: string;
   pageCount?: number;
-  status: 'processing' | 'completed' | 'failed';
+  status: 'processing' | 'completed' | 'failed' | 'in-progress';
   fileSize: number;
 }
 

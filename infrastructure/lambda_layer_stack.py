@@ -69,6 +69,11 @@ class LambdaLayerStack(Stack):
         # Create single CodeBuild project for all layers
         self.layers_build_project = self._create_layers_build_project()
         
+        # Set layer ARNs (will be populated after CodeBuild runs)
+        # Using x86_64 layers as default for Lambda functions
+        self.pypdf_layer_arn = f"arn:aws:lambda:{self.region}:{self.account}:layer:{self.project_name}-pypdf-layer-{self.env_name}-x86-64:1"
+        self.boto3_layer_arn = f"arn:aws:lambda:{self.region}:{self.account}:layer:{self.project_name}-boto3-layer-{self.env_name}-x86-64:1"
+        
         # Add stack outputs
         self._add_outputs()
 
@@ -142,10 +147,18 @@ class LambdaLayerStack(Stack):
         Returns:
             CodeBuild Project for all layers
         """
+        # Read buildspec from YAML file
+        import yaml
+        import os
+        
+        buildspec_path = os.path.join(os.path.dirname(__file__), "..", "buildspecs", "buildspec_layers.yml")
+        with open(buildspec_path, "r") as stream:
+            build_spec_yml = yaml.safe_load(stream)
+
         project = codebuild.Project(
             self,
-            "LayersBuildProject",
-            project_name=f"{self.project_name}-layers-{self.env_name}",
+            f"lambda_layer_build_{self.env_name}",
+            project_name=f"{self.project_name}-lambda-layer-builder-{self.env_name}",
             description="Build all Lambda layers (pypdf and boto3) for both x86_64 and ARM64",
             role=self.codebuild_role,
             environment=codebuild.BuildEnvironment(
@@ -153,9 +166,7 @@ class LambdaLayerStack(Stack):
                 compute_type=codebuild.ComputeType.SMALL,
                 privileged=False
             ),
-            build_spec=codebuild.BuildSpec.from_source_filename(
-                "buildspecs/buildspec_layers.yml"
-            ),
+            build_spec=codebuild.BuildSpec.from_object_to_yaml(build_spec_yml),
             timeout=Duration.minutes(45),
             artifacts=codebuild.Artifacts.s3(
                 bucket=self.artifacts_bucket,
@@ -197,4 +208,20 @@ class LambdaLayerStack(Stack):
             value=self.artifacts_bucket.bucket_name,
             description="S3 bucket for layer build artifacts",
             export_name=f"{self.stack_name}-ArtifactsBucket"
+        )
+        
+        CfnOutput(
+            self,
+            "PypdfLayerArn",
+            value=self.pypdf_layer_arn,
+            description="ARN of pypdf Lambda layer (version 1)",
+            export_name=f"{self.stack_name}-PypdfLayerArn"
+        )
+        
+        CfnOutput(
+            self,
+            "Boto3LayerArn", 
+            value=self.boto3_layer_arn,
+            description="ARN of boto3 Lambda layer (version 1)",
+            export_name=f"{self.stack_name}-Boto3LayerArn"
         )

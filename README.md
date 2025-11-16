@@ -112,9 +112,8 @@ document-insight-extraction/
 │   ├── cognito_stack.py           # Cognito authentication
 │   ├── s3_stack.py                # S3 buckets (documents and vectors)
 │   ├── lambda_layer_stack.py      # Lambda layers (pypdf, boto3)
-│   ├── lambda_function_stack.py   # Lambda functions
+│   ├── lambda_function_stack.py   # Lambda functions and WebSocket API
 │   ├── api_gateway_stack.py       # REST API endpoints
-│   ├── websocket_api_stack.py     # WebSocket API
 │   ├── dynamodb_stack.py          # DynamoDB cache table
 │   └── apprunner_hosting_stack.py # AppRunner frontend hosting
 │
@@ -306,9 +305,8 @@ The stacks are deployed in the following order (dependencies are handled automat
 2. **S3 Stack** - Document and vector storage
 3. **Lambda Layer Stack** - Dependencies (pypdf, boto3)
 4. **DynamoDB Stack** - Insights cache
-5. **WebSocket API Stack** - Real-time updates
-6. **Lambda Function Stack** - Processing and extraction
-7. **API Gateway Stack** - REST endpoints
+5. **Lambda Function Stack** - Processing, extraction, and WebSocket API
+6. **API Gateway Stack** - REST endpoints
 8. **AppRunner Stack** - Frontend hosting
 
 ## Post-Deployment Setup

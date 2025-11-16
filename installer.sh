@@ -41,7 +41,7 @@ phases:
       python: 3.12
     commands:
       - echo Installing dependencies...
-      - npm install -g aws-cdk@2.192.0
+      - npm install -g aws-cdk@2.1031.2
       - pip install -r requirements.txt
       
   build:

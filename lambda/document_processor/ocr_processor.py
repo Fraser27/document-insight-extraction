@@ -8,7 +8,7 @@ import json
 import base64
 import boto3
 from typing import List, Dict
-
+from decimal import Decimal
 logger = logging.getLogger(__name__)
 
 
@@ -95,29 +95,26 @@ class OCRProcessor:
             # Return empty string on error to allow processing to continue
             return ""
     
-    def process_images(self, images: List[Dict[str, any]]) -> str:
+    def process_images(self, images: List[bytes]) -> str:
         """
         Process multiple images and combine OCR results.
         
         Args:
-            images: List of image dictionaries with 'data' and 'format' keys
+            images: List of image data as bytes
             
         Returns:
             Combined OCR text from all images
         """
         ocr_texts = []
         
-        for idx, image in enumerate(images):
+        for idx, image_data in enumerate(images):
             try:
-                image_data = image.get('data')
-                image_format = image.get('format', 'JPEG')
-                
                 if not image_data:
                     self.logger.warning(f"Image {idx} has no data")
                     continue
                 
-                # Perform OCR
-                text = self.perform_ocr(image_data, image_format)
+                # Perform OCR (format detection is automatic in most cases)
+                text = self.perform_ocr(image_data, "JPEG")
                 
                 if text:
                     ocr_texts.append(text)

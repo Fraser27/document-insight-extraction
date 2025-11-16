@@ -1,9 +1,8 @@
 version: 0.2
 
-# Consolidated BuildSpec for creating all Lambda Layers
-# This buildspec creates Lambda layers for both pypdf and boto3 packages
-# Each layer is built for both x86_64 and ARM64 architectures
-
+# Consolidated BuildSpec for creating Lambda Layers (x86_64 only)
+# This buildspec creates Lambda layers for pypdf and boto3 packages
+# Built for x86_64 architecture only
 phases:
   install:
     runtime-versions:
@@ -15,7 +14,7 @@ phases:
   pre_build:
     commands:
       - echo "Build started on `date`"
-      - echo "Building all Lambda layers for both x86_64 and ARM64 architectures"
+      - echo "Building Lambda layers for x86_64 architecture"
       - echo "Project name - $PROJECT_NAME"
       - echo "Environment - $ENV_NAME"
       - echo "AWS Region - $AWS_REGION"
@@ -24,60 +23,28 @@ phases:
   build:
     commands:
       # ========================================
-      # Build pypdf Layer
+      # Build pypdf Layer (x86_64 only)
       # ========================================
       - echo "========================================="
       - echo "Building pypdf layer..."
       - echo "========================================="
       
-      # Build pypdf x86_64 layer
+      # Build pypdf x86_64 layer with image support
       - echo "Building pypdf x86_64 layer..."
       - mkdir -p pypdf-layer-x86_64/python
-      - pip install --target pypdf-layer-x86_64/python PyPDF2 --platform manylinux2014_x86_64 --only-binary=:all: --python-version 3.12
+      - pip install --target pypdf-layer-x86_64/python 'pypdf[image]' pillow --platform manylinux2014_x86_64 --only-binary=':all:' --python-version 3.12
       - cd pypdf-layer-x86_64
       - zip -r ../pypdf-layer-x86_64.zip python
       - cd ..
       - echo "pypdf x86_64 layer size - $(du -h pypdf-layer-x86_64.zip | cut -f1)"
       
-      # Build pypdf ARM64 layer
-      - echo "Building pypdf ARM64 layer..."
-      - mkdir -p pypdf-layer-arm64/python
-      - pip install --target pypdf-layer-arm64/python PyPDF2 --platform manylinux2014_aarch64 --only-binary=:all: --python-version 3.12
-      - cd pypdf-layer-arm64
-      - zip -r ../pypdf-layer-arm64.zip python
-      - cd ..
-      - echo "pypdf ARM64 layer size - $(du -h pypdf-layer-arm64.zip | cut -f1)"
-      
       # Publish pypdf x86_64 layer
       - echo "Publishing pypdf x86_64 layer version..."
-      - |
-        PYPDF_X86_LAYER_VERSION=$(aws lambda publish-layer-version \
-          --layer-name "${PROJECT_NAME}-pypdf-layer-${ENV_NAME}-x86-64" \
-          --description "PyPDF2 library for PDF text extraction (x86_64)" \
-          --zip-file fileb://pypdf-layer-x86_64.zip \
-          --compatible-runtimes python3.12 \
-          --compatible-architectures x86_64 \
-          --region $AWS_REGION \
-          --query 'Version' \
-          --output text)
-      - echo "Published pypdf x86_64 layer version - $PYPDF_X86_LAYER_VERSION"
-      
-      # Publish pypdf ARM64 layer
-      - echo "Publishing pypdf ARM64 layer version..."
-      - |
-        PYPDF_ARM_LAYER_VERSION=$(aws lambda publish-layer-version \
-          --layer-name "${PROJECT_NAME}-pypdf-layer-${ENV_NAME}-arm64" \
-          --description "PyPDF2 library for PDF text extraction (ARM64)" \
-          --zip-file fileb://pypdf-layer-arm64.zip \
-          --compatible-runtimes python3.12 \
-          --compatible-architectures arm64 \
-          --region $AWS_REGION \
-          --query 'Version' \
-          --output text)
-      - echo "Published pypdf ARM64 layer version - $PYPDF_ARM_LAYER_VERSION"
+      - PYPDF_LAYER_VERSION=$(aws lambda publish-layer-version --layer-name "${PROJECT_NAME}-pypdf-layer-${ENV_NAME}-x86-64" --description "pypdf library for PDF text extraction (x86_64)" --zip-file fileb://pypdf-layer-x86_64.zip --compatible-runtimes python3.12 --compatible-architectures x86_64 --region $AWS_REGION --query 'Version' --output text)
+      - echo "Published pypdf x86_64 layer version - $PYPDF_LAYER_VERSION"
       
       # ========================================
-      # Build boto3 Layer
+      # Build boto3 Layer (x86_64 only)
       # ========================================
       - echo "========================================="
       - echo "Building boto3 layer with S3 Vectors support..."
@@ -88,66 +55,16 @@ phases:
       # Build boto3 x86_64 layer
       - echo "Building boto3 x86_64 layer..."
       - mkdir -p boto3-layer-x86_64/python
-      - |
-        pip install --target boto3-layer-x86_64/python \
-          --upgrade \
-          boto3 \
-          botocore \
-          --platform manylinux2014_x86_64 \
-          --only-binary=:all: \
-          --python-version 3.12
+      - pip install --target boto3-layer-x86_64/python --upgrade boto3 botocore --platform manylinux2014_x86_64 --only-binary=':all:' --python-version 3.12
       - cd boto3-layer-x86_64
       - zip -r ../boto3-layer-x86_64.zip python
       - cd ..
       - echo "boto3 x86_64 layer size - $(du -h boto3-layer-x86_64.zip | cut -f1)"
       
-      # Build boto3 ARM64 layer
-      - echo "Building boto3 ARM64 layer..."
-      - mkdir -p boto3-layer-arm64/python
-      - |
-        pip install --target boto3-layer-arm64/python \
-          --upgrade \
-          boto3 \
-          botocore \
-          --platform manylinux2014_aarch64 \
-          --only-binary=:all: \
-          --python-version 3.12
-      - cd boto3-layer-arm64
-      - zip -r ../boto3-layer-arm64.zip python
-      - cd ..
-      - echo "boto3 ARM64 layer size - $(du -h boto3-layer-arm64.zip | cut -f1)"
-      
-      # Verify boto3 version in x86_64 layer
-      - echo "Verifying boto3 version in x86_64 layer..."
-      - python3 -c "import sys; sys.path.insert(0, 'boto3-layer-x86_64/python'); import boto3; print(f'boto3 version: {boto3.__version__}')"
-      
       # Publish boto3 x86_64 layer
       - echo "Publishing boto3 x86_64 layer version..."
-      - |
-        BOTO3_X86_LAYER_VERSION=$(aws lambda publish-layer-version \
-          --layer-name "${PROJECT_NAME}-boto3-layer-${ENV_NAME}-x86-64" \
-          --description "Latest boto3 with S3 Vectors API support (x86_64)" \
-          --zip-file fileb://boto3-layer-x86_64.zip \
-          --compatible-runtimes python3.12 python3.11 python3.10 \
-          --compatible-architectures x86_64 \
-          --region $AWS_REGION \
-          --query 'Version' \
-          --output text)
-      - echo "Published boto3 x86_64 layer version - $BOTO3_X86_LAYER_VERSION"
-      
-      # Publish boto3 ARM64 layer
-      - echo "Publishing boto3 ARM64 layer version..."
-      - |
-        BOTO3_ARM_LAYER_VERSION=$(aws lambda publish-layer-version \
-          --layer-name "${PROJECT_NAME}-boto3-layer-${ENV_NAME}-arm64" \
-          --description "Latest boto3 with S3 Vectors API support (ARM64)" \
-          --zip-file fileb://boto3-layer-arm64.zip \
-          --compatible-runtimes python3.12 python3.11 python3.10 \
-          --compatible-architectures arm64 \
-          --region $AWS_REGION \
-          --query 'Version' \
-          --output text)
-      - echo "Published boto3 ARM64 layer version - $BOTO3_ARM_LAYER_VERSION"
+      - BOTO3_LAYER_VERSION=$(aws lambda publish-layer-version --layer-name "${PROJECT_NAME}-boto3-layer-${ENV_NAME}-x86-64" --description "Latest boto3 with S3 Vectors API support (x86_64)" --zip-file fileb://boto3-layer-x86_64.zip --compatible-runtimes python3.12 python3.11 python3.10 --compatible-architectures x86_64 --region $AWS_REGION --query 'Version' --output text)
+      - echo "Published boto3 x86_64 layer version - $BOTO3_LAYER_VERSION"
       
   post_build:
     commands:
@@ -155,37 +72,17 @@ phases:
       - echo "Build completed on `date`"
       - echo "========================================="
       - echo ""
-      - echo "pypdf Layer ARNs:"
-      - echo "  x86_64: arn:aws:lambda:${AWS_REGION}:${AWS_ACCOUNT_ID}:layer:${PROJECT_NAME}-pypdf-layer-${ENV_NAME}-x86-64:${PYPDF_X86_LAYER_VERSION}"
-      - echo "  ARM64:  arn:aws:lambda:${AWS_REGION}:${AWS_ACCOUNT_ID}:layer:${PROJECT_NAME}-pypdf-layer-${ENV_NAME}-arm64:${PYPDF_ARM_LAYER_VERSION}"
+      - echo "Layer ARNs (x86_64 only):"
+      - echo "  pypdf - arn:aws:lambda:${AWS_REGION}:${AWS_ACCOUNT_ID}:layer:${PROJECT_NAME}-pypdf-layer-${ENV_NAME}-x86-64:${PYPDF_LAYER_VERSION}"
+      - echo "  boto3 - arn:aws:lambda:${AWS_REGION}:${AWS_ACCOUNT_ID}:layer:${PROJECT_NAME}-boto3-layer-${ENV_NAME}-x86-64:${BOTO3_LAYER_VERSION}"
       - echo ""
-      - echo "boto3 Layer ARNs:"
-      - echo "  x86_64: arn:aws:lambda:${AWS_REGION}:${AWS_ACCOUNT_ID}:layer:${PROJECT_NAME}-boto3-layer-${ENV_NAME}-x86-64:${BOTO3_X86_LAYER_VERSION}"
-      - echo "  ARM64:  arn:aws:lambda:${AWS_REGION}:${AWS_ACCOUNT_ID}:layer:${PROJECT_NAME}-boto3-layer-${ENV_NAME}-arm64:${BOTO3_ARM_LAYER_VERSION}"
-      - echo ""
-      - |
-        echo "{
-          \"pypdf\": {
-            \"x86_64_layer_arn\": \"arn:aws:lambda:${AWS_REGION}:${AWS_ACCOUNT_ID}:layer:${PROJECT_NAME}-pypdf-layer-${ENV_NAME}-x86-64:${PYPDF_X86_LAYER_VERSION}\",
-            \"x86_64_layer_version\": \"${PYPDF_X86_LAYER_VERSION}\",
-            \"arm64_layer_arn\": \"arn:aws:lambda:${AWS_REGION}:${AWS_ACCOUNT_ID}:layer:${PROJECT_NAME}-pypdf-layer-${ENV_NAME}-arm64:${PYPDF_ARM_LAYER_VERSION}\",
-            \"arm64_layer_version\": \"${PYPDF_ARM_LAYER_VERSION}\"
-          },
-          \"boto3\": {
-            \"x86_64_layer_arn\": \"arn:aws:lambda:${AWS_REGION}:${AWS_ACCOUNT_ID}:layer:${PROJECT_NAME}-boto3-layer-${ENV_NAME}-x86-64:${BOTO3_X86_LAYER_VERSION}\",
-            \"x86_64_layer_version\": \"${BOTO3_X86_LAYER_VERSION}\",
-            \"arm64_layer_arn\": \"arn:aws:lambda:${AWS_REGION}:${AWS_ACCOUNT_ID}:layer:${PROJECT_NAME}-boto3-layer-${ENV_NAME}-arm64:${BOTO3_ARM_LAYER_VERSION}\",
-            \"arm64_layer_version\": \"${BOTO3_ARM_LAYER_VERSION}\"
-          }
-        }" > layer_info.json
+      - echo '{"pypdf":{"layer_arn":"arn:aws:lambda:'${AWS_REGION}':'${AWS_ACCOUNT_ID}':layer:'${PROJECT_NAME}'-pypdf-layer-'${ENV_NAME}'-x86-64:'${PYPDF_LAYER_VERSION}'","layer_version":"'${PYPDF_LAYER_VERSION}'"},"boto3":{"layer_arn":"arn:aws:lambda:'${AWS_REGION}':'${AWS_ACCOUNT_ID}':layer:'${PROJECT_NAME}'-boto3-layer-'${ENV_NAME}'-x86-64:'${BOTO3_LAYER_VERSION}'","layer_version":"'${BOTO3_LAYER_VERSION}'"}}' > layer_info.json
       - cat layer_info.json
 
 artifacts:
   files:
     - pypdf-layer-x86_64.zip
-    - pypdf-layer-arm64.zip
     - boto3-layer-x86_64.zip
-    - boto3-layer-arm64.zip
     - layer_info.json
   name: lambda-layers-artifacts
 

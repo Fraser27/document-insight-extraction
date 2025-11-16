@@ -5,9 +5,19 @@ import {
   SpaceBetween,
   Box,
   StatusIndicator,
+  ExpandableSection,
+  Alert,
 } from '@cloudscape-design/components';
 import { websocketService } from '../../services/websocket';
 import type { ProgressMessage } from '../../services/websocket';
+import { getAuthHeaders } from '../../utils/authUtils';
+import { getConfig } from '../../config/config';
+
+interface ProcessingError {
+  page: number;
+  message: string;
+  timestamp: number;
+}
 
 interface UploadProgressProps {
   docId: string;
@@ -28,6 +38,7 @@ export const UploadProgress: React.FC<UploadProgressProps> = ({
   const [status, setStatus] = useState<'processing' | 'completed' | 'error'>('processing');
   const [statusMessage, setStatusMessage] = useState('Waiting for processing to start...');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [processingErrors, setProcessingErrors] = useState<ProcessingError[]>([]);
 
   useEffect(() => {
     // Subscribe to WebSocket messages
@@ -61,6 +72,9 @@ export const UploadProgress: React.FC<UploadProgressProps> = ({
           setProgress(100);
           setStatusMessage('Processing completed successfully');
           
+          // Fetch final status to check for any errors
+          fetchProcessingStatus();
+          
           // Notify parent component
           setTimeout(() => {
             onComplete?.(docId);
@@ -72,6 +86,10 @@ export const UploadProgress: React.FC<UploadProgressProps> = ({
           const errMsg = message.message || 'An error occurred during processing';
           setErrorMessage(errMsg);
           setStatusMessage('Processing failed');
+          
+          // Fetch detailed error information
+          fetchProcessingStatus();
+          
           onError?.(errMsg);
           break;
       }
@@ -82,6 +100,32 @@ export const UploadProgress: React.FC<UploadProgressProps> = ({
       unsubscribe();
     };
   }, [docId, onComplete, onError]);
+
+  const fetchProcessingStatus = async () => {
+    try {
+      const config = getConfig();
+      const headers = await getAuthHeaders();
+      const response = await fetch(`${config.apiUrl}/documents/${docId}/status`, {
+        headers,
+      });
+
+      if (response.ok) {
+        const statusData = await response.json();
+        
+        // Check for errors in the processing
+        if (statusData.errors && statusData.errors.length > 0) {
+          setProcessingErrors(statusData.errors);
+        }
+        
+        // Update error message if present
+        if (statusData.errorMessage) {
+          setErrorMessage(statusData.errorMessage);
+        }
+      }
+    } catch (error) {
+      console.error('Error fetching processing status:', error);
+    }
+  };
 
   const getStatusIndicator = () => {
     switch (status) {
@@ -132,12 +176,31 @@ export const UploadProgress: React.FC<UploadProgressProps> = ({
         )}
 
         {status === 'error' && errorMessage && (
-          <Box color="text-status-error" fontSize="body-m">
+          <Alert type="error" header="Processing failed">
+            {errorMessage}
+          </Alert>
+        )}
+
+        {processingErrors.length > 0 && (
+          <ExpandableSection
+            headerText={`Processing errors (${processingErrors.length})`}
+            variant="footer"
+          >
             <SpaceBetween size="xs">
-              <Box>{statusMessage}</Box>
-              <Box variant="small">{errorMessage}</Box>
+              {processingErrors.map((error, index) => (
+                <Box key={index} variant="small">
+                  <Box variant="strong">Page {error.page}:</Box> {error.message}
+                </Box>
+              ))}
             </SpaceBetween>
-          </Box>
+          </ExpandableSection>
+        )}
+
+        {status === 'completed' && processingErrors.length > 0 && (
+          <Alert type="warning" header="Completed with warnings">
+            Processing completed but {processingErrors.length} page(s) had errors. 
+            The document may be incomplete.
+          </Alert>
         )}
 
         {pagesProcessed > 0 && totalPages && status === 'processing' && (

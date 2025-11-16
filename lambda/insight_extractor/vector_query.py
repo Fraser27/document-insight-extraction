@@ -8,7 +8,7 @@ import logging
 import json
 import boto3
 from typing import List, Dict, Any
-
+from decimal import Decimal
 logger = logging.getLogger(__name__)
 
 
@@ -112,11 +112,11 @@ class VectorQuery:
         """
         try:
             # Generate query embedding
-            self.logger.info(f"Generating embedding for query: '{query_text[:50]}...'")
+            print(f"Generating embedding for query: '{query_text[:50]}...'")
             query_embedding = self.generate_query_embedding(query_text)
             
             # Query S3 Vectors with metadata filter
-            self.logger.info(
+            print(
                 f"Querying vectors for docId={doc_id}, top_k={top_k}"
             )
             
@@ -126,7 +126,7 @@ class VectorQuery:
                 top_k=top_k
             )
             
-            self.logger.info(f"Retrieved {len(results)} results")
+            print(f"Retrieved {len(results)} results")
             
             return results
             
@@ -202,7 +202,7 @@ class VectorQuery:
                     'uploadTimestamp': metadata.get('uploadTimestamp', 0)
                 })
             
-            self.logger.info(
+            print(
                 f"Retrieved {len(results)} results with distances: "
                 f"{[f'{r['distance']:.3f}' for r in results]}"
             )

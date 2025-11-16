@@ -1,14 +1,14 @@
 """
 PDF Text Extraction Module
 
-This module provides functionality to extract text from PDF documents using PyPDF2.
+This module provides functionality to extract text from PDF documents using pypdf.
 Handles pages with and without text content.
 """
 import logging
 from typing import List, Dict
 from io import BytesIO
-from PyPDF2 import PdfReader
-
+from pypdf import PdfReader
+from decimal import Decimal
 logger = logging.getLogger(__name__)
 
 
@@ -43,7 +43,7 @@ class PDFExtractor:
             reader = PdfReader(pdf_file)
             
             total_pages = len(reader.pages)
-            self.logger.info(f"PDF has {total_pages} pages")
+            print(f"PDF has {total_pages} pages")
             
             # Extract text from each page
             page_texts = []

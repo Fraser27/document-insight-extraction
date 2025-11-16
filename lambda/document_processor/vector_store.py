@@ -7,7 +7,7 @@ vector embeddings with metadata using the boto3 s3vectors client.
 import logging
 import boto3
 from typing import List, Dict, Any
-
+from decimal import Decimal
 logger = logging.getLogger(__name__)
 
 
@@ -126,7 +126,7 @@ class VectorStore:
                 total_success += len(batch)
                 self.logger.debug(f"Stored batch of {len(batch)} vectors")
             
-            self.logger.info(
+            print(
                 f"Stored {total_success}/{len(vectors)} vectors successfully"
             )
             
@@ -203,7 +203,7 @@ class VectorStore:
                     break
             
             if not keys_to_delete:
-                self.logger.info(f"No vectors found for doc_id: {doc_id}")
+                print(f"No vectors found for doc_id: {doc_id}")
                 return 0
             
             # Delete vectors in batches (max 500 per request)
@@ -221,7 +221,7 @@ class VectorStore:
                 delete_count += len(batch)
                 self.logger.debug(f"Deleted batch of {len(batch)} vectors")
             
-            self.logger.info(
+            print(
                 f"Deleted {delete_count} vectors for doc_id: {doc_id}"
             )
             

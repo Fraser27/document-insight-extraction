@@ -1,52 +1,75 @@
 import axios from 'axios';
 import type { AxiosInstance, AxiosError } from 'axios';
 import { getIdToken } from './auth';
+import { loadConfig } from '../config/config';
 
-const API_ENDPOINT = import.meta.env.VITE_API_ENDPOINT || '';
+let apiClient: AxiosInstance | null = null;
 
-// Create axios instance
-const apiClient: AxiosInstance = axios.create({
-  baseURL: API_ENDPOINT,
-  headers: {
-    'Content-Type': 'application/json',
-  },
-});
+// Initialize API client with configuration
+const initializeApiClient = async (): Promise<AxiosInstance> => {
+  if (apiClient) {
+    return apiClient;
+  }
 
-// Request interceptor to add authentication token
-apiClient.interceptors.request.use(
-  async (config) => {
-    try {
-      const token = await getIdToken();
-      if (token) {
-        config.headers.Authorization = `Bearer ${token}`;
+  const config = await loadConfig();
+
+  // Create axios instance
+  apiClient = axios.create({
+    baseURL: config.apiUrl,
+    headers: {
+      'Content-Type': 'application/json',
+    },
+  });
+
+  // Request interceptor to add authentication token
+  apiClient.interceptors.request.use(
+    async (config) => {
+      try {
+        const token = await getIdToken();
+        if (token) {
+          config.headers.Authorization = `Bearer ${token}`;
+        }
+      } catch (error) {
+        console.error('Failed to get auth token:', error);
       }
-    } catch (error) {
-      console.error('Failed to get auth token:', error);
+      return config;
+    },
+    (error) => {
+      return Promise.reject(error);
     }
-    return config;
-  },
-  (error) => {
-    return Promise.reject(error);
-  }
-);
+  );
 
-// Response interceptor for error handling
-apiClient.interceptors.response.use(
-  (response) => response,
-  (error: AxiosError) => {
-    if (error.response?.status === 401) {
-      // Unauthorized - redirect to login
-      window.location.href = '/login';
+  // Response interceptor for error handling
+  apiClient.interceptors.response.use(
+    (response) => response,
+    (error: AxiosError) => {
+      if (error.response?.status === 401) {
+        // Unauthorized - redirect to login
+        window.location.href = '/login';
+      }
+      return Promise.reject(error);
     }
-    return Promise.reject(error);
+  );
+
+  return apiClient;
+};
+
+// Get API client instance
+const getApiClient = async (): Promise<AxiosInstance> => {
+  if (!apiClient) {
+    return await initializeApiClient();
   }
-);
+  return apiClient;
+};
+
+
 
 // Types
 export interface PresignedUrlRequest {
   fileName: string;
   fileSize: number;
   contentType: string;
+  connectionId?: string; // Optional WebSocket connection ID for progress notifications
 }
 
 export interface PresignedUrlResponse {
@@ -64,8 +87,23 @@ export interface Document {
   fileName: string;
   uploadDate: string;
   pageCount?: number;
-  status: 'processing' | 'completed' | 'failed';
+  status: 'processing' | 'completed' | 'failed' | 'in-progress';
   fileSize: number;
+}
+
+export interface ProcessingStatus {
+  docId: string;
+  status: 'in-progress' | 'completed' | 'failed';
+  totalPages?: number;
+  currentPage?: number;
+  filename?: string;
+  startTime?: number;
+  lastUpdated?: number;
+  completedAt?: number;
+  failedAt?: number;
+  errorMessage?: string;
+  totalChunks?: number;
+  progressMessage?: string;
 }
 
 export interface InsightRequest {
@@ -110,7 +148,8 @@ export interface CachedInsight {
 export const getPresignedUrl = async (
   request: PresignedUrlRequest
 ): Promise<PresignedUrlResponse> => {
-  const response = await apiClient.post<PresignedUrlResponse>(
+  const client = await getApiClient();
+  const response = await client.post<PresignedUrlResponse>(
     '/documents/presigned-url',
     request
   );
@@ -146,7 +185,8 @@ export const uploadToS3 = async (
  * List all documents for the current user
  */
 export const listDocuments = async (): Promise<Document[]> => {
-  const response = await apiClient.get<Document[]>('/documents');
+  const client = await getApiClient();
+  const response = await client.get<Document[]>('/documents');
   return response.data;
 };
 
@@ -156,7 +196,8 @@ export const listDocuments = async (): Promise<Document[]> => {
 export const extractInsights = async (
   request: InsightRequest
 ): Promise<InsightResponse> => {
-  const response = await apiClient.post<InsightResponse>(
+  const client = await getApiClient();
+  const response = await client.post<InsightResponse>(
     '/insights/extract',
     request
   );
@@ -167,7 +208,17 @@ export const extractInsights = async (
  * Get cached insights for a specific document
  */
 export const getInsights = async (docId: string): Promise<CachedInsight[]> => {
-  const response = await apiClient.get<CachedInsight[]>(`/insights/${docId}`);
+  const client = await getApiClient();
+  const response = await client.get<CachedInsight[]>(`/insights/${docId}`);
+  return response.data;
+};
+
+/**
+ * Get processing status for a document
+ */
+export const getProcessingStatus = async (docId: string): Promise<ProcessingStatus> => {
+  const client = await getApiClient();
+  const response = await client.get<ProcessingStatus>(`/documents/${docId}/status`);
   return response.data;
 };
 
@@ -175,7 +226,8 @@ export const getInsights = async (docId: string): Promise<CachedInsight[]> => {
  * Delete a document
  */
 export const deleteDocument = async (docId: string): Promise<void> => {
-  await apiClient.delete(`/documents/${docId}`);
+  const client = await getApiClient();
+  await client.delete(`/documents/${docId}`);
 };
 
-export default apiClient;
+export default getApiClient;

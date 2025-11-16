@@ -55,11 +55,13 @@ export const UploadButton: React.FC<UploadButtonProps> = ({
       // Connect to WebSocket for progress updates
       await websocketService.connect();
 
-      // Get presigned URL
+      // Get presigned URL with connection ID for progress notifications
+      const connectionId = websocketService.getConnectionId();
       const presignedUrlResponse = await getPresignedUrl({
         fileName: selectedFile.name,
         fileSize: selectedFile.size,
         contentType: selectedFile.type,
+        connectionId: connectionId || undefined, // Include connection ID if available
       });
 
       setUploadingDocId(presignedUrlResponse.docId);

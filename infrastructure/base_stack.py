@@ -53,22 +53,11 @@ class BaseDocumentInsightStack(Stack):
 
     def _setup_common_config(self) -> None:
         """Set up common configuration values used across the stack."""
-        # S3 configuration
-        self.documents_bucket_name = self.config.get(
-            "s3_documents_bucket",
-            f"{self.project_name}-docs-{self.env_name}-{self.account}"
-        )
-        self.vector_bucket_name = self.config.get(
-            "s3_vector_bucket",
-            f"{self.project_name}-vectors-{self.env_name}-{self.account}"
-        )
+        self.documents_bucket_name = f'{self.config.get("s3_documents_bucket")}-{self.account}'
+        self.vector_bucket_name = f'{self.config.get("s3_vector_bucket")}-{self.account}'
         
         # DynamoDB configuration
-        self.cache_table_name = self.config.get(
-            "dynamodb_cache_table",
-            f"{self.project_name}-cache-{self.env_name}"
-        )
-        
+        self.cache_table_name = self.config.get("dynamodb_cache_table")
         # Lambda configuration
         self.lambda_memory = self.config.get("lambda_memory", 3008)
         self.lambda_timeout = self.config.get("lambda_timeout", 600)

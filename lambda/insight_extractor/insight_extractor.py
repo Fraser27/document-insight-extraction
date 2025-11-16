@@ -9,7 +9,7 @@ import logging
 import json
 import time
 from typing import Dict, Any
-
+from decimal import Decimal
 # Import local modules
 from cache_manager import CacheManager
 from vector_query import VectorQuery
@@ -41,6 +41,15 @@ vector_query = VectorQuery(
 )
 insight_generator = InsightGenerator(region=REGION, model_id=INSIGHT_MODEL_ID)
 
+class CustomJsonEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, Decimal):
+            if float(obj).is_integer():
+                return int(float(obj))
+            else:
+                return float(obj)
+        return super(CustomJsonEncoder, self).default(obj)
+
 
 def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     """
@@ -60,21 +69,24 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     logger.info(f"Received event: {json.dumps(event)}")
     
     try:
-        # Determine HTTP method
+        # Determine HTTP method and path
         http_method = event.get('httpMethod', event.get('requestContext', {}).get('http', {}).get('method', 'POST'))
+        path = event.get('path', event.get('rawPath', ''))
         
-        if http_method == 'POST':
-            # Extract insights
-            return handle_extract_insights(event)
-        elif http_method == 'GET':
-            # Retrieve cached insights
-            return handle_get_insights(event)
-        else:
-            return {
-                'statusCode': 405,
-                'headers': get_cors_headers(),
-                'body': json.dumps({'error': 'Method not allowed'})
-            }
+        logger.info(f"Processing {http_method} {path}")
+        
+        # Route to appropriate handler
+        if path.startswith('/insights'):
+            if http_method == 'POST':
+                return handle_extract_insights(event)
+            elif http_method == 'GET':
+                return handle_get_insights(event)
+        
+        return {
+            'statusCode': 405,
+            'headers': get_cors_headers(),
+            'body': json.dumps({'error': 'Method not allowed'})
+        }
             
     except Exception as e:
         logger.error(f"Error in handler: {str(e)}", exc_info=True)
@@ -134,7 +146,7 @@ def handle_extract_insights(event: Dict[str, Any]) -> Dict[str, Any]:
                     'modelId': cached_insights.get('modelId', ''),
                     'chunkCount': cached_insights.get('chunkCount', 0),
                     'expiresAt': cached_insights.get('expiresAt', 0)
-                })
+                }, cls=CustomJsonEncoder)
             }
         
         # Cache miss - generate insights
@@ -194,7 +206,7 @@ def handle_extract_insights(event: Dict[str, Any]) -> Dict[str, Any]:
                 'processingTime': round(processing_time, 2),
                 'modelId': INSIGHT_MODEL_ID,
                 'timestamp': int(time.time())
-            })
+            }, cls=CustomJsonEncoder)
         }
         
     except Exception as e:
@@ -271,7 +283,7 @@ def handle_get_insights(event: Dict[str, Any]) -> Dict[str, Any]:
                 'docId': doc_id,
                 'insights': formatted_insights,
                 'count': len(formatted_insights)
-            })
+            }, cls=CustomJsonEncoder)
         }
         
     except Exception as e:

@@ -7,14 +7,14 @@ for optimal embedding generation and retrieval.
 import logging
 from typing import List, Dict
 import re
-
+from decimal import Decimal
 logger = logging.getLogger(__name__)
 
 
 class TextChunker:
     """Split text into chunks with configurable size and overlap."""
     
-    def __init__(self, chunk_size: int = 8192, chunk_overlap: int = 819):
+    def __init__(self, chunk_size: int = 5000, chunk_overlap: int = 819):
         """
         Initialize text chunker.
         
@@ -78,7 +78,7 @@ class TextChunker:
                 }
             })
         
-        self.logger.info(
+        print(
             f"Created {len(chunk_dicts)} chunks from {len(text)} characters "
             f"(page range: {page_range})"
         )

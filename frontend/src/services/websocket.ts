@@ -1,6 +1,5 @@
 import { getIdToken } from './auth';
-
-const WSS_ENDPOINT = import.meta.env.VITE_WSS_ENDPOINT || '';
+import { getConfig } from '../config/config';
 
 export type WebSocketStatus = 'connecting' | 'connected' | 'disconnected' | 'error';
 
@@ -24,7 +23,7 @@ class WebSocketService {
   private reconnectAttempts = 0;
   private maxReconnectAttempts = 5;
   private reconnectDelay = 1000; // Start with 1 second
-  private reconnectTimer: number | null = null;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private isIntentionallyClosed = false;
 
   /**
@@ -41,7 +40,8 @@ class WebSocketService {
     try {
       // Get auth token for WebSocket connection
       const token = await getIdToken();
-      const wsUrl = `${WSS_ENDPOINT}?token=${encodeURIComponent(token)}`;
+      const config = getConfig();
+      const wsUrl = `${config.websocketUrl}?token=${encodeURIComponent(token)}`;
 
       this.updateStatus('connecting');
       this.ws = new WebSocket(wsUrl);
@@ -51,6 +51,11 @@ class WebSocketService {
         this.reconnectAttempts = 0;
         this.reconnectDelay = 1000;
         this.updateStatus('connected');
+        
+        // Generate a client-side connection ID for tracking
+        // In a real AWS API Gateway WebSocket setup, this would be provided by AWS
+        this.connectionId = `conn_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        console.log('Generated connection ID:', this.connectionId);
       };
 
       this.ws.onmessage = (event) => {
@@ -212,6 +217,24 @@ class WebSocketService {
   isConnected(): boolean {
     return this.ws !== null && this.ws.readyState === WebSocket.OPEN;
   }
+
+  /**
+   * Get the current WebSocket connection ID
+   * For AWS API Gateway WebSocket, this needs to be obtained from the backend
+   * or tracked when the connection is established
+   */
+  getConnectionId(): string | null {
+    return this.connectionId;
+  }
+
+  /**
+   * Set the connection ID (typically received from the backend)
+   */
+  setConnectionId(connectionId: string): void {
+    this.connectionId = connectionId;
+  }
+
+  private connectionId: string | null = null;
 }
 
 // Export singleton instance

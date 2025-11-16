@@ -5,7 +5,7 @@ This module defines the Cognito User Pool and User Pool Client for user authenti
 """
 from aws_cdk import (
     aws_cognito as cognito,
-    aws_apigateway as apigateway,
+    aws_ssm as ssm,
     Duration,
 )
 from constructs import Construct
@@ -48,8 +48,7 @@ class CognitoAuthStack(BaseDocumentInsightStack):
         # Create User Pool Client
         self.user_pool_client = self._create_user_pool_client()
         
-        # Create Cognito Authorizer for API Gateway
-        self.authorizer = self._create_cognito_authorizer()
+        # Note: Cognito Authorizer is created in API Gateway stack
         
         # Export outputs
         self._create_outputs()
@@ -146,31 +145,28 @@ class CognitoAuthStack(BaseDocumentInsightStack):
 
         return user_pool_client
 
-    def _create_cognito_authorizer(self) -> apigateway.CognitoUserPoolsAuthorizer:
-        """
-        Create Cognito User Pools Authorizer for API Gateway.
-        
-        This authorizer can be attached to API Gateway REST API endpoints
-        to enforce authentication using Cognito user pool tokens.
-        
-        Returns:
-            CognitoUserPoolsAuthorizer construct
-        """
-        authorizer = apigateway.CognitoUserPoolsAuthorizer(
-            self,
-            "DocumentInsightAuthorizer",
-            cognito_user_pools=[self.user_pool],
-            authorizer_name=self.get_resource_name("authorizer"),
-            # Token validity - 24 hours
-            results_cache_ttl=Duration.hours(24),
-            # Identity source - Authorization header
-            identity_source="method.request.header.Authorization"
-        )
 
-        return authorizer
 
     def _create_outputs(self) -> None:
-        """Create CloudFormation outputs for user pool and client IDs."""
+        """Create CloudFormation outputs and SSM parameters for user pool and client IDs."""
+        # Store in SSM Parameter Store for cross-stack access
+        ssm.StringParameter(
+            self,
+            "UserPoolIdParameter",
+            parameter_name=f"/{self.project_name}/{self.env_name}/cognito/user-pool-id",
+            string_value=self.user_pool.user_pool_id,
+            description="Cognito User Pool ID"
+        )
+        
+        ssm.StringParameter(
+            self,
+            "UserPoolClientIdParameter",
+            parameter_name=f"/{self.project_name}/{self.env_name}/cognito/user-pool-client-id",
+            string_value=self.user_pool_client.user_pool_client_id,
+            description="Cognito User Pool Client ID"
+        )
+        
+        # CloudFormation outputs
         self.add_stack_output(
             "UserPoolId",
             value=self.user_pool.user_pool_id,

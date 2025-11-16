@@ -10,8 +10,8 @@ import json
 import time
 import uuid
 import boto3
-from typing import Dict, Any, List
-
+from typing import Dict, Any, List, Optional
+from decimal import Decimal
 # Import local modules
 from pdf_extractor import PDFExtractor
 from image_detector import ImageDetector
@@ -20,6 +20,8 @@ from text_chunker import TextChunker
 from embedding_generator import EmbeddingGenerator
 from vector_store import VectorStore
 from websocket_notifier import WebSocketNotifier
+from processing_status_manager import ProcessingStatusManager
+from websocket_connection_manager import WebSocketConnectionManager
 
 # Configure logging
 log_level = os.environ.get('LOG_LEVEL', 'INFO')
@@ -34,6 +36,7 @@ VECTOR_BUCKET_NAME = os.environ.get('VECTOR_BUCKET_NAME')
 VECTOR_INDEX_ARN = os.environ.get('VECTOR_INDEX_ARN')
 EMBED_MODEL_ID = os.environ.get('EMBED_MODEL_ID')
 WSS_URL = os.environ.get('WSS_URL')
+DYNAMODB_TABLE_NAME = os.environ.get('DYNAMODB_TABLE_NAME')
 REGION = os.environ.get('REGION', 'us-east-1')
 
 # Initialize AWS clients
@@ -52,6 +55,16 @@ vector_store = VectorStore(
 )
 websocket_notifier = WebSocketNotifier(websocket_url=WSS_URL, region=REGION)
 
+# Initialize processing status manager and connection manager if DynamoDB table is configured
+processing_status_manager = None
+connection_manager = None
+if DYNAMODB_TABLE_NAME:
+    processing_status_manager = ProcessingStatusManager(region=REGION, table_name=DYNAMODB_TABLE_NAME)
+    connection_manager = WebSocketConnectionManager(region=REGION, table_name=DYNAMODB_TABLE_NAME)
+    print(f"Processing status manager initialized with table: {DYNAMODB_TABLE_NAME}")
+else:
+    logger.warning("DYNAMODB_TABLE_NAME not set - processing status tracking disabled")
+
 
 def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     """
@@ -68,8 +81,13 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     Returns:
         Response dictionary
     """
-    logger.info(f"Received event: {json.dumps(event)}")
+    print(f"Received event: {json.dumps(event)}")
     
+    # Handle WebSocket events
+    if 'requestContext' in event and 'connectionId' in event.get('requestContext', {}):
+        return handle_websocket_event(event)
+    
+    # Handle S3 events
     try:
         # Parse S3 event
         if 'Records' not in event:
@@ -105,6 +123,72 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         }
 
 
+def handle_websocket_event(event: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Handle WebSocket connection events.
+    
+    Args:
+        event: WebSocket event from API Gateway
+        
+    Returns:
+        Response dictionary
+    """
+    try:
+        request_context = event.get('requestContext', {})
+        connection_id = request_context.get('connectionId')
+        route_key = request_context.get('routeKey')
+        
+        logger.info(f"WebSocket event: {route_key}, connection: {connection_id}")
+        
+        if route_key == '$connect':
+            # Handle new connection
+            query_params = event.get('queryStringParameters', {})
+            token = query_params.get('token')
+            
+            if not token:
+                logger.error("No token provided in WebSocket connection")
+                return {'statusCode': 401, 'body': 'Unauthorized - token required'}
+            
+            if not connection_manager:
+                logger.error("Connection manager not initialized")
+                return {'statusCode': 500, 'body': 'Server configuration error'}
+            
+            # Decode JWT token to get user ID
+            payload = connection_manager.decode_jwt_token(token)
+            if not payload:
+                logger.error("Invalid token")
+                return {'statusCode': 401, 'body': 'Unauthorized - invalid token'}
+            
+            # Extract user ID from token (Cognito uses 'sub' claim)
+            user_id = payload.get('sub') or payload.get('cognito:username') or payload.get('username')
+            if not user_id:
+                logger.error("No user ID in token")
+                return {'statusCode': 401, 'body': 'Unauthorized - invalid token claims'}
+            
+            # Store connection
+            success = connection_manager.store_connection(user_id, connection_id)
+            if success:
+                logger.info(f"WebSocket connected: user={user_id}, connection={connection_id}")
+                return {'statusCode': 200, 'body': 'Connected'}
+            else:
+                return {'statusCode': 500, 'body': 'Failed to store connection'}
+        
+        elif route_key == '$disconnect':
+            # Handle disconnection - we need to find the user by connection_id
+            # For now, we'll let TTL handle cleanup
+            logger.info(f"WebSocket disconnected: {connection_id}")
+            return {'statusCode': 200, 'body': 'Disconnected'}
+        
+        else:
+            # Handle other routes (if any)
+            logger.warning(f"Unhandled WebSocket route: {route_key}")
+            return {'statusCode': 200, 'body': 'OK'}
+    
+    except Exception as e:
+        logger.error(f"Error handling WebSocket event: {str(e)}", exc_info=True)
+        return {'statusCode': 500, 'body': f'Error: {str(e)}'}
+
+
 def process_document(record: Dict[str, Any]) -> None:
     """
     Process a newly uploaded document.
@@ -117,30 +201,52 @@ def process_document(record: Dict[str, Any]) -> None:
         bucket = record['s3']['bucket']['name']
         key = record['s3']['object']['key']
         
-        logger.info(f"Processing document: s3://{bucket}/{key}")
+        print(f"Processing document: s3://{bucket}/{key}")
         
         # Generate document ID from key
         doc_id = generate_doc_id(key)
         
-        # Get connection ID for WebSocket notifications
-        connection_id = get_connection_id(bucket, key)
+        # Get user ID from S3 metadata
+        user_id = get_user_id_from_s3(bucket, key)
+        
+        # Get connection IDs from DynamoDB (if user has active WebSocket connections)
+        connection_ids = []
+        if connection_manager and user_id:
+            connection_ids = connection_manager.get_connections(user_id)
         
         # Download PDF from S3
-        logger.info(f"Downloading PDF from S3...")
+        print(f"Downloading PDF from S3...")
         response = s3_client.get_object(Bucket=bucket, Key=key)
         pdf_bytes = response['Body'].read()
         
-        # Get total page count
-        total_pages = pdf_extractor.get_page_count(pdf_bytes)
-        logger.info(f"Document has {total_pages} pages")
+        # Extract all text from PDF once (more efficient than page-by-page)
+        print(f"Extracting text from PDF...")
+        all_page_texts = pdf_extractor.extract_text_from_pdf(pdf_bytes)
+        total_pages = len(all_page_texts)
+        print(f"Document has {total_pages} pages")
         
-        # Send processing started notification
-        if connection_id:
-            websocket_notifier.send_processing_started(
-                connection_id=connection_id,
+        # Extract filename from key
+        filename = key.split('/')[-1]
+        
+        # Create processing status record
+        if processing_status_manager and user_id:
+            processing_status_manager.create_processing_record(
+                user_id=user_id,
                 doc_id=doc_id,
-                total_pages=total_pages
+                total_pages=total_pages,
+                filename=filename
             )
+        
+        # Send processing started notification to all active connections
+        for connection_id in connection_ids:
+            try:
+                websocket_notifier.send_processing_started(
+                    connection_id=connection_id,
+                    doc_id=doc_id,
+                    total_pages=total_pages
+                )
+            except Exception as e:
+                logger.warning(f"Failed to send to connection {connection_id}: {str(e)}")
         
         # Process document in batches
         page_texts = []
@@ -149,12 +255,12 @@ def process_document(record: Dict[str, Any]) -> None:
         
         for page_num in range(total_pages):
             try:
-                # Extract text from page
-                page_text = extract_page_text(pdf_bytes, page_num)
+                # Get text from already extracted pages
+                page_text = all_page_texts[page_num]['text']
                 
                 # Check for images and perform OCR if needed
                 if image_detector.has_images(pdf_bytes, page_num):
-                    logger.info(f"Page {page_num + 1} has images, performing OCR...")
+                    print(f"Page {page_num + 1} has images, performing OCR...")
                     images = image_detector.extract_images(pdf_bytes, page_num)
                     ocr_text = ocr_processor.process_images(images)
                     
@@ -173,45 +279,81 @@ def process_document(record: Dict[str, Any]) -> None:
                     chunks_created = process_batch(page_texts, doc_id)
                     total_chunks += chunks_created
                     
-                    # Send progress update
-                    if connection_id:
-                        websocket_notifier.send_progress(
-                            connection_id=connection_id,
+                    # Update processing status
+                    if processing_status_manager and user_id:
+                        processing_status_manager.update_progress(
+                            user_id=user_id,
                             doc_id=doc_id,
-                            pages_processed=page_num + 1,
-                            total_pages=total_pages,
-                            message_text=f"Processed {page_num + 1} pages, created {chunks_created} chunks"
+                            current_page=page_num + 1,
+                            message=f"Processed {page_num + 1} pages, created {chunks_created} chunks"
                         )
+                    
+                    # Send progress update to all active connections
+                    for connection_id in connection_ids:
+                        try:
+                            websocket_notifier.send_progress(
+                                connection_id=connection_id,
+                                doc_id=doc_id,
+                                pages_processed=page_num + 1,
+                                total_pages=total_pages,
+                                message_text=f"Processed {page_num + 1} pages, created {chunks_created} chunks"
+                            )
+                        except Exception as e:
+                            logger.warning(f"Failed to send progress to connection {connection_id}: {str(e)}")
                     
                     # Clear batch
                     page_texts = []
                 
             except Exception as e:
                 logger.error(f"Error processing page {page_num + 1}: {str(e)}")
-                # Send error notification but continue processing
-                if connection_id:
-                    websocket_notifier.send_error(
-                        connection_id=connection_id,
+                
+                # Record error in DynamoDB
+                if processing_status_manager and user_id:
+                    processing_status_manager.add_error(
+                        user_id=user_id,
                         doc_id=doc_id,
-                        error_code="PAGE_PROCESSING_ERROR",
-                        error_message=f"Error on page {page_num + 1}: {str(e)}",
-                        recoverable=True
+                        page_num=page_num + 1,
+                        error_message=str(e)
                     )
+                
+                # Send error notification but continue processing
+                for connection_id in connection_ids:
+                    try:
+                        websocket_notifier.send_error(
+                            connection_id=connection_id,
+                            doc_id=doc_id,
+                            error_code="PAGE_PROCESSING_ERROR",
+                            error_message=f"Error on page {page_num + 1}: {str(e)}",
+                            recoverable=True
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to send error to connection {connection_id}: {str(e)}")
         
         # Process remaining pages
         if page_texts:
             chunks_created = process_batch(page_texts, doc_id)
             total_chunks += chunks_created
         
-        # Send completion notification
-        if connection_id:
-            websocket_notifier.send_processing_complete(
-                connection_id=connection_id,
+        # Mark processing as completed
+        if processing_status_manager and user_id:
+            processing_status_manager.mark_completed(
+                user_id=user_id,
                 doc_id=doc_id,
                 total_chunks=total_chunks
             )
         
-        logger.info(
+        # Send completion notification to all active connections
+        for connection_id in connection_ids:
+            try:
+                websocket_notifier.send_processing_complete(
+                    connection_id=connection_id,
+                    doc_id=doc_id,
+                    total_chunks=total_chunks
+                )
+            except Exception as e:
+                logger.warning(f"Failed to send completion to connection {connection_id}: {str(e)}")
+        
+        print(
             f"Document processing complete: {doc_id}, "
             f"{total_pages} pages, {total_chunks} chunks"
         )
@@ -219,37 +361,32 @@ def process_document(record: Dict[str, Any]) -> None:
     except Exception as e:
         logger.error(f"Error processing document: {str(e)}", exc_info=True)
         
-        # Send error notification
-        if 'connection_id' in locals() and connection_id:
-            websocket_notifier.send_error(
-                connection_id=connection_id,
-                doc_id=doc_id if 'doc_id' in locals() else 'unknown',
-                error_code="PROCESSING_FAILED",
-                error_message=str(e),
-                recoverable=False
+        # Mark processing as failed
+        if 'doc_id' in locals() and 'user_id' in locals() and processing_status_manager and user_id:
+            processing_status_manager.mark_failed(
+                user_id=user_id,
+                doc_id=doc_id,
+                error_message=str(e)
             )
+        
+        # Send error notification to all active connections
+        if 'connection_ids' in locals():
+            for connection_id in connection_ids:
+                try:
+                    websocket_notifier.send_error(
+                        connection_id=connection_id,
+                        doc_id=doc_id if 'doc_id' in locals() else 'unknown',
+                        error_code="PROCESSING_FAILED",
+                        error_message=str(e),
+                        recoverable=False
+                    )
+                except Exception as send_error:
+                    logger.warning(f"Failed to send error to connection {connection_id}: {str(send_error)}")
         
         raise
 
 
-def extract_page_text(pdf_bytes: bytes, page_num: int) -> str:
-    """
-    Extract text from a single page.
-    
-    Args:
-        pdf_bytes: PDF file bytes
-        page_num: Page number (0-indexed)
-        
-    Returns:
-        Extracted text
-    """
-    # Extract all pages (cached by PyPDF2)
-    page_texts = pdf_extractor.extract_text_from_pdf(pdf_bytes)
-    
-    if page_num < len(page_texts):
-        return page_texts[page_num]['text']
-    
-    return ""
+
 
 
 def process_batch(page_texts: List[Dict[str, Any]], doc_id: str) -> int:
@@ -279,7 +416,7 @@ def process_batch(page_texts: List[Dict[str, Any]], doc_id: str) -> int:
         last_page = page_texts[-1]['page']
         page_range = f"{first_page}-{last_page}"
         
-        logger.info(f"Processing batch: pages {page_range}, {len(combined_text)} characters")
+        print(f"Processing batch: pages {page_range}, {len(combined_text)} characters")
         
         # Chunk text
         chunks = text_chunker.chunk_text(
@@ -288,7 +425,7 @@ def process_batch(page_texts: List[Dict[str, Any]], doc_id: str) -> int:
             doc_id=doc_id
         )
         
-        logger.info(f"Created {len(chunks)} chunks")
+        print(f"Created {len(chunks)} chunks")
         
         # Generate embeddings and store vectors
         vectors_to_store = []
@@ -322,7 +459,7 @@ def process_batch(page_texts: List[Dict[str, Any]], doc_id: str) -> int:
         # Store vectors in batch
         success_count = vector_store.put_vectors_batch(vectors_to_store)
         
-        logger.info(f"Stored {success_count}/{len(vectors_to_store)} vectors")
+        print(f"Stored {success_count}/{len(vectors_to_store)} vectors")
         
         return len(chunks)
         
@@ -343,7 +480,7 @@ def cleanup_document(record: Dict[str, Any]) -> None:
         bucket = record['s3']['bucket']['name']
         key = record['s3']['object']['key']
         
-        logger.info(f"Cleaning up document: s3://{bucket}/{key}")
+        print(f"Cleaning up document: s3://{bucket}/{key}")
         
         # Generate document ID from key
         doc_id = generate_doc_id(key)
@@ -351,7 +488,13 @@ def cleanup_document(record: Dict[str, Any]) -> None:
         # Delete all vectors for this document
         deleted_count = vector_store.delete_vectors_by_doc_id(doc_id)
         
-        logger.info(f"Deleted {deleted_count} vectors for document {doc_id}")
+        # Clean up processing status record
+        # Note: We need user_id from metadata to clean up
+        user_id = get_user_id_from_s3(bucket, key)
+        if processing_status_manager and user_id:
+            processing_status_manager.cleanup_old_records(user_id, doc_id)
+        
+        print(f"Deleted {deleted_count} vectors for document {doc_id}")
         
     except Exception as e:
         logger.error(f"Error cleaning up document: {str(e)}", exc_info=True)
@@ -361,44 +504,52 @@ def generate_doc_id(s3_key: str) -> str:
     """
     Generate a document ID from S3 key.
     
+    Extracts the UUID from filenames like: uuid_filename.pdf
+    
     Args:
         s3_key: S3 object key
         
     Returns:
-        Document ID
+        Document ID (UUID part if present, otherwise filename without extension)
     """
-    # Extract filename without extension
+    # Extract filename from key
     filename = s3_key.split('/')[-1]
-    name_without_ext = filename.rsplit('.', 1)[0]
     
-    # Create a deterministic ID based on the key
-    # In production, you might want to use a UUID or hash
-    return name_without_ext.replace(' ', '-').lower()
+    # If filename starts with UUID, extract it
+    if '_' in filename:
+        potential_uuid = filename.split('_')[0]
+        # Check if it looks like a UUID
+        if len(potential_uuid) == 36 and potential_uuid.count('-') == 4:
+            return potential_uuid
+    
+    # Fallback: use filename without extension
+    return filename.rsplit('.', 1)[0]
 
 
-def get_connection_id(bucket: str, key: str) -> str:
+def get_user_id_from_s3(bucket: str, key: str) -> Optional[str]:
     """
-    Get WebSocket connection ID from S3 object metadata.
+    Get user ID from S3 object metadata.
     
     Args:
         bucket: S3 bucket name
         key: S3 object key
         
     Returns:
-        Connection ID or None
+        User ID or None if not found
     """
     try:
         response = s3_client.head_object(Bucket=bucket, Key=key)
         metadata = response.get('Metadata', {})
-        connection_id = metadata.get('connection-id')
         
-        if connection_id:
-            logger.info(f"Found connection ID: {connection_id}")
-            return connection_id
+        user_id = metadata.get('user-id')
+        
+        if user_id:
+            print(f"Found user ID in metadata: {user_id}")
         else:
-            logger.warning("No connection ID found in object metadata")
-            return None
+            print("No user ID found in object metadata")
+        
+        return user_id
             
     except Exception as e:
-        logger.warning(f"Error getting connection ID: {str(e)}")
+        logger.warning(f"Error getting metadata from S3: {str(e)}")
         return None

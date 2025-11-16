@@ -4,12 +4,13 @@ API Gateway Stack for Document Insight Extraction System
 This module defines the REST API Gateway with endpoints for document management
 and insight extraction, including Cognito authorization and CORS configuration.
 
-Note: WebSocket API for real-time progress updates is defined in websocket_api_stack.py
+Note: WebSocket API for real-time progress updates is now defined in lambda_function_stack.py
 """
 from aws_cdk import (
     aws_apigateway as apigateway,
     aws_lambda as lambda_,
     aws_cognito as cognito,
+    aws_ssm as ssm,
     Duration,
 )
 from constructs import Construct
@@ -36,6 +37,9 @@ class ApiGatewayStack(BaseDocumentInsightStack):
         env_name: str,
         config: dict,
         cognito_user_pool: cognito.IUserPool,
+        insight_extractor_arn: str,
+        document_processor_arn: str,
+        document_api_arn: str,
         **kwargs
     ) -> None:
         """
@@ -47,6 +51,9 @@ class ApiGatewayStack(BaseDocumentInsightStack):
             env_name: Environment name (dev, prod, etc.)
             config: Environment-specific configuration dictionary
             cognito_user_pool: Cognito User Pool for authorization
+            insight_extractor_arn: ARN of the insight extractor Lambda function
+            document_processor_arn: ARN of the document processor Lambda function
+            document_api_arn: ARN of the document api Lambda function
             **kwargs: Additional stack properties
         """
         super().__init__(scope, construct_id, env_name, config, **kwargs)
@@ -63,10 +70,24 @@ class ApiGatewayStack(BaseDocumentInsightStack):
         # Create Cognito authorizer
         self.authorizer = self._create_cognito_authorizer()
         
-        # Store Lambda functions (to be set later)
-        self.presigned_url_lambda: Optional[lambda_.IFunction] = None
-        self.document_list_lambda: Optional[lambda_.IFunction] = None
-        self.insight_extraction_lambda: Optional[lambda_.IFunction] = None
+        # Import Lambda functions from ARNs (following reference project pattern)
+        self.insight_extraction_lambda = lambda_.Function.from_function_attributes(
+            self, 
+            f"{env_name}_insight_extractor_lambda", 
+            function_arn=insight_extractor_arn, 
+            same_environment=True
+        )
+
+        # Import Document API Lambda from ARN
+        self.document_api_lambda = lambda_.Function.from_function_attributes(
+            self, 
+            f"{env_name}_document_api_lambda", 
+            function_arn=document_api_arn, 
+            same_environment=True
+        )
+                
+        # Configure API endpoints with imported Lambda functions
+        self._configure_all_endpoints()
         
         # Export outputs
         self._create_outputs()
@@ -78,22 +99,7 @@ class ApiGatewayStack(BaseDocumentInsightStack):
         Returns:
             RestApi construct
         """
-        # CORS configuration for AppRunner origin
-        # In production, this should be restricted to the specific AppRunner URL
-        cors_options = apigateway.CorsOptions(
-            allow_origins=apigateway.Cors.ALL_ORIGINS,  # Will be restricted in production
-            allow_methods=apigateway.Cors.ALL_METHODS,
-            allow_headers=[
-                "Content-Type",
-                "X-Amz-Date",
-                "Authorization",
-                "X-Api-Key",
-                "X-Amz-Security-Token",
-                "X-Amz-User-Agent"
-            ],
-            allow_credentials=True,
-            max_age=Duration.hours(1)
-        )
+        # CORS configuration handled manually per resource to avoid conflicts
 
         # Create REST API
         rest_api = apigateway.RestApi(
@@ -103,8 +109,7 @@ class ApiGatewayStack(BaseDocumentInsightStack):
             description=f"Document Insight Extraction System REST API - {self.env_name}",
             # Regional endpoint for better performance and lower cost
             endpoint_types=[apigateway.EndpointType.REGIONAL],
-            # CORS configuration
-            default_cors_preflight_options=cors_options,
+            # CORS configuration handled manually per resource
             # Deployment configuration
             deploy=True,
             deploy_options=apigateway.StageOptions(
@@ -147,6 +152,111 @@ class ApiGatewayStack(BaseDocumentInsightStack):
 
         return authorizer
 
+    def _configure_all_endpoints(self) -> None:
+        """
+        Configure all API Gateway endpoints with imported Lambda functions.
+        
+        This method configures all endpoints and adds the required CfnPermissions
+        for imported Lambda functions, following the reference project pattern.
+        """
+        # Store resources for CORS configuration
+        self.api_resources_for_cors = []
+        
+        # Configure insight extraction endpoints
+        self.configure_insight_extraction_endpoint(self.insight_extraction_lambda)
+        self.configure_insight_retrieval_endpoint(self.insight_extraction_lambda)
+        
+        # Configure document management endpoints
+        self.configure_presigned_url_endpoint(self.document_api_lambda)
+        self.configure_document_list_endpoint(self.document_api_lambda)
+        self.configure_document_status_endpoint(self.document_api_lambda)
+        
+        # Add CORS to all collected resources
+        self._add_cors_to_collected_resources()
+        
+        # Add Lambda permissions for imported functions (required)
+        self._add_all_lambda_permissions()
+
+    def _add_cors_to_collected_resources(self) -> None:
+        """
+        Add CORS OPTIONS method to all collected API Gateway resources.
+        
+        This method adds CORS to resources that were collected during endpoint configuration,
+        ensuring no duplicates and proper CORS coverage.
+        """
+        # Use a set to avoid duplicates
+        unique_resources = set(self.api_resources_for_cors)
+        
+        for resource in unique_resources:
+            try:
+                self.add_cors_options(resource)
+            except Exception as e:
+                # Log the error but continue with other resources
+                print(f"Warning: Failed to add CORS to resource {resource}: {e}")
+                continue
+
+    def _add_all_lambda_permissions(self) -> None:
+        """
+        Add all required Lambda permissions for imported functions.
+        
+        Following the reference project pattern, imported Lambda functions
+        don't retain resource policies, so we need to create CfnPermissions manually.
+        """
+        import os
+        account_id = os.getenv('CDK_DEFAULT_ACCOUNT')
+        region = os.getenv('CDK_DEFAULT_REGION')
+        
+        # Insight Extractor Lambda permissions
+        lambda_.CfnPermission(
+            self,
+            "InsightExtractLambdaPermission",
+            action="lambda:InvokeFunction",
+            function_name=self.insight_extraction_lambda.function_name,
+            principal="apigateway.amazonaws.com",
+            source_arn=f"arn:aws:execute-api:{region}:{account_id}:{self.rest_api.rest_api_id}/*/POST/insights/extract",
+            source_account=account_id,
+        )
+        
+        lambda_.CfnPermission(
+            self,
+            "InsightRetrievalLambdaPermission",
+            action="lambda:InvokeFunction",
+            function_name=self.insight_extraction_lambda.function_name,
+            principal="apigateway.amazonaws.com",
+            source_arn=f"arn:aws:execute-api:{region}:{account_id}:{self.rest_api.rest_api_id}/*/GET/insights/*",
+            source_account=account_id,
+        )
+        
+        # Document API Lambda permissions
+        lambda_.CfnPermission(
+            self,
+            "PresignedUrlLambdaPermission",
+            action="lambda:InvokeFunction",
+            function_name=self.document_api_lambda.function_name,
+            principal="apigateway.amazonaws.com",
+            source_arn=f"arn:aws:execute-api:{region}:{account_id}:{self.rest_api.rest_api_id}/*/POST/documents/presigned-url",
+            source_account=account_id,
+        )
+        
+        lambda_.CfnPermission(
+            self,
+            "DocumentListLambdaPermission",
+            action="lambda:InvokeFunction",
+            function_name=self.document_api_lambda.function_name,
+            principal="apigateway.amazonaws.com",
+            source_arn=f"arn:aws:execute-api:{region}:{account_id}:{self.rest_api.rest_api_id}/*/GET/documents",
+            source_account=account_id,
+        )
+        
+        lambda_.CfnPermission(
+            self,
+            "DocumentStatusLambdaPermission",
+            action="lambda:InvokeFunction",
+            function_name=self.document_api_lambda.function_name,
+            principal="apigateway.amazonaws.com",
+            source_arn=f"arn:aws:execute-api:{region}:{account_id}:{self.rest_api.rest_api_id}/*/GET/documents/*/status",
+            source_account=account_id,
+        )
 
     def configure_presigned_url_endpoint(
         self,
@@ -167,6 +277,9 @@ class ApiGatewayStack(BaseDocumentInsightStack):
         
         # Create /documents/presigned-url resource
         presigned_url_resource = documents_resource.add_resource("presigned-url")
+        
+        # Collect resources for CORS configuration
+        self.api_resources_for_cors.extend([documents_resource, presigned_url_resource])
         
         # Create Lambda integration
         presigned_url_integration = apigateway.LambdaIntegration(
@@ -197,6 +310,8 @@ class ApiGatewayStack(BaseDocumentInsightStack):
                 )
             ]
         )
+        
+
 
     def configure_document_list_endpoint(
         self,
@@ -216,6 +331,8 @@ class ApiGatewayStack(BaseDocumentInsightStack):
         documents_resource = self.rest_api.root.get_resource("documents")
         if not documents_resource:
             documents_resource = self.rest_api.root.add_resource("documents")
+            # Only add to CORS list if we created it (not if it already existed)
+            self.api_resources_for_cors.append(documents_resource)
         
         # Create Lambda integration
         document_list_integration = apigateway.LambdaIntegration(
@@ -246,6 +363,68 @@ class ApiGatewayStack(BaseDocumentInsightStack):
                 )
             ]
         )
+        
+
+
+    def configure_document_status_endpoint(
+        self,
+        document_api_lambda: lambda_.IFunction
+    ) -> None:
+        """
+        Configure GET /documents/{docId}/status endpoint.
+        
+        This endpoint retrieves the processing status for a document.
+        
+        Args:
+            document_api_lambda: Lambda function to get document status
+        """
+        # Get or create /documents resource
+        documents_resource = self.rest_api.root.get_resource("documents")
+        if not documents_resource:
+            documents_resource = self.rest_api.root.add_resource("documents")
+            self.api_resources_for_cors.append(documents_resource)
+        
+        # Create /documents/{docId} resource with path parameter
+        doc_id_resource = documents_resource.add_resource("{docId}")
+        
+        # Create /documents/{docId}/status resource
+        status_resource = doc_id_resource.add_resource("status")
+        
+        # Add resources to CORS list
+        self.api_resources_for_cors.extend([doc_id_resource, status_resource])
+        
+        # Create Lambda integration
+        status_integration = apigateway.LambdaIntegration(
+            document_api_lambda,
+            proxy=True,
+            integration_responses=[
+                apigateway.IntegrationResponse(
+                    status_code="200",
+                    response_parameters={
+                        "method.response.header.Access-Control-Allow-Origin": "'*'"
+                    }
+                )
+            ]
+        )
+        
+        # Add GET method with Cognito authorizer
+        status_resource.add_method(
+            "GET",
+            status_integration,
+            authorizer=self.authorizer,
+            authorization_type=apigateway.AuthorizationType.COGNITO,
+            method_responses=[
+                apigateway.MethodResponse(
+                    status_code="200",
+                    response_parameters={
+                        "method.response.header.Access-Control-Allow-Origin": True
+                    }
+                )
+            ],
+            request_parameters={
+                "method.request.path.docId": True  # Required path parameter
+            }
+        )
 
     def configure_insight_extraction_endpoint(
         self,
@@ -268,11 +447,14 @@ class ApiGatewayStack(BaseDocumentInsightStack):
         # Create /insights/extract resource
         extract_resource = insights_resource.add_resource("extract")
         
+        # Collect resources for CORS configuration
+        self.api_resources_for_cors.extend([insights_resource, extract_resource])
+        
         # Create Lambda integration with extended timeout
         insight_extraction_integration = apigateway.LambdaIntegration(
             insight_extraction_lambda,
             proxy=True,
-            timeout=Duration.seconds(300),  # 5 minutes for insight generation
+            # timeout=Duration.seconds(300),  # 5 minutes for insight generation
             integration_responses=[
                 apigateway.IntegrationResponse(
                     status_code="200",
@@ -298,6 +480,8 @@ class ApiGatewayStack(BaseDocumentInsightStack):
                 )
             ]
         )
+        
+
 
     def configure_insight_retrieval_endpoint(
         self,
@@ -315,9 +499,14 @@ class ApiGatewayStack(BaseDocumentInsightStack):
         insights_resource = self.rest_api.root.get_resource("insights")
         if not insights_resource:
             insights_resource = self.rest_api.root.add_resource("insights")
+            # Only add to CORS list if we created it (not if it already existed)
+            self.api_resources_for_cors.append(insights_resource)
         
         # Create /insights/{docId} resource with path parameter
         doc_id_resource = insights_resource.add_resource("{docId}")
+        
+        # Add doc_id_resource to CORS list
+        self.api_resources_for_cors.append(doc_id_resource)
         
         # Create Lambda integration
         insight_retrieval_integration = apigateway.LambdaIntegration(
@@ -351,9 +540,65 @@ class ApiGatewayStack(BaseDocumentInsightStack):
                 "method.request.path.docId": True  # Required path parameter
             }
         )
+        
+
+
+    def add_cors_options(self, api_resource: apigateway.IResource) -> None:
+        """
+        Add CORS OPTIONS method to an API Gateway resource.
+        
+        This method adds a mock integration that responds to preflight CORS requests
+        with appropriate headers, following the same pattern as the reference project.
+        
+        The OPTIONS method is not protected by Cognito authorization to allow
+        preflight requests from browsers before authentication.
+        
+        Args:
+            api_resource: The API Gateway resource to add CORS to
+        """
+        api_resource.add_method(
+            "OPTIONS",
+            apigateway.MockIntegration(
+                integration_responses=[
+                    {
+                        "statusCode": "200",
+                        "responseParameters": {
+                            "method.response.header.Access-Control-Allow-Headers": "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,X-Amz-User-Agent'",
+                            "method.response.header.Access-Control-Allow-Origin": "'*'",
+                            "method.response.header.Access-Control-Allow-Credentials": "'false'",
+                            "method.response.header.Access-Control-Allow-Methods": "'OPTIONS,GET,PUT,POST,DELETE'",
+                        },
+                    }
+                ],
+                passthrough_behavior=apigateway.PassthroughBehavior.NEVER,
+                request_templates={"application/json": '{"statusCode": 200}'},
+            ),
+            method_responses=[
+                {
+                    "statusCode": "200",
+                    "responseParameters": {
+                        "method.response.header.Access-Control-Allow-Headers": True,
+                        "method.response.header.Access-Control-Allow-Methods": True,
+                        "method.response.header.Access-Control-Allow-Credentials": True,
+                        "method.response.header.Access-Control-Allow-Origin": True,
+                    },
+                }
+            ],
+            authorization_type=apigateway.AuthorizationType.NONE
+        )
 
     def _create_outputs(self) -> None:
-        """Create CloudFormation outputs for API endpoints."""
+        """Create CloudFormation outputs and SSM parameters for API endpoints."""
+        # Store in SSM Parameter Store for cross-stack access
+        ssm.StringParameter(
+            self,
+            "RestApiUrlParameter",
+            parameter_name=f"/{self.project_name}/{self.env_name}/api/rest-api-url",
+            string_value=self.rest_api.url,
+            description="REST API Gateway URL"
+        )
+        
+        # CloudFormation outputs
         # API Gateway URL
         self.add_stack_output(
             "RestApiUrl",

@@ -7,7 +7,7 @@ import {
 } from '@cloudscape-design/components';
 import type { SelectProps } from '@cloudscape-design/components';
 import { listDocuments } from '../../services/api';
-import type { Document } from '../../types/document';
+import type { Document } from '../../services/api';
 
 interface DocumentSelectorProps {
   onDocumentSelect: (docId: string, fileName: string) => void;

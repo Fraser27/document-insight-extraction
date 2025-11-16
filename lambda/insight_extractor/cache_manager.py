@@ -7,10 +7,30 @@ with 24-hour TTL for cost optimization.
 import logging
 import time
 import boto3
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Union
 from boto3.dynamodb.conditions import Key, Attr
-
+from decimal import Decimal
 logger = logging.getLogger(__name__)
+
+
+def convert_floats_to_decimal(obj: Any) -> Any:
+    """
+    Recursively convert all float values to Decimal for DynamoDB compatibility.
+    
+    Args:
+        obj: Object to convert (dict, list, or primitive)
+        
+    Returns:
+        Converted object with Decimals instead of floats
+    """
+    if isinstance(obj, float):
+        return Decimal(str(obj))
+    elif isinstance(obj, dict):
+        return {k: convert_floats_to_decimal(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_floats_to_decimal(item) for item in obj]
+    else:
+        return obj
 
 
 class CacheManager:
@@ -62,12 +82,12 @@ class CacheManager:
             
             if response['Items']:
                 cached_item = response['Items'][0]
-                self.logger.info(
+                print(
                     f"Cache hit for docId={doc_id}, prompt='{prompt[:50]}...'"
                 )
                 return cached_item
             else:
-                self.logger.info(
+                print(
                     f"Cache miss for docId={doc_id}, prompt='{prompt[:50]}...'"
                 )
                 return None
@@ -102,12 +122,12 @@ class CacheManager:
             timestamp = int(time.time())
             expires_at = timestamp + (self.ttl_hours * 3600)
             
-            # Prepare item
+            # Prepare item - convert floats to Decimal for DynamoDB
             item = {
                 'docId': doc_id,
                 'extractionTimestamp': timestamp,
                 'prompt': prompt,
-                'insights': insights,
+                'insights': convert_floats_to_decimal(insights),
                 'modelId': model_id,
                 'chunkCount': chunk_count,
                 'expiresAt': expires_at
@@ -116,7 +136,7 @@ class CacheManager:
             # Store in DynamoDB
             self.table.put_item(Item=item)
             
-            self.logger.info(
+            print(
                 f"Stored insights in cache: docId={doc_id}, "
                 f"prompt='{prompt[:50]}...', expires in {self.ttl_hours}h"
             )
@@ -149,7 +169,7 @@ class CacheManager:
             
             items = response['Items']
             
-            self.logger.info(
+            print(
                 f"Retrieved {len(items)} non-expired insights for docId={doc_id}"
             )
             
@@ -188,7 +208,7 @@ class CacheManager:
                 )
                 deleted_count += 1
             
-            self.logger.info(
+            print(
                 f"Invalidated {deleted_count} cache entries for docId={doc_id}"
             )
             
