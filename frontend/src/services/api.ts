@@ -144,6 +144,36 @@ export interface CachedInsight {
   expiresAt: number;
 }
 
+export interface ImageInsightsRequest {
+  image: string; // Base64 encoded image
+  prompt?: string; // Optional user prompt
+}
+
+export interface ImageInsightsResponse {
+  is_valid_image: boolean;
+  validation_message: string;
+  key_insights: {
+    name?: string;
+    age?: string;
+    document_type?: string;
+    other_details?: string[];
+  };
+  forgery_detection: {
+    suspicious: boolean;
+    confidence: number;
+    indicators: string[];
+  };
+  qr_code_detected: boolean;
+  qr_bounding_box?: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  };
+  qr_code_data?: string;
+  raw_response?: string;
+}
+
 // API Functions
 
 /**
@@ -232,6 +262,20 @@ export const getProcessingStatus = async (docId: string): Promise<ProcessingStat
 export const deleteDocument = async (docId: string): Promise<void> => {
   const client = await getApiClient();
   await client.delete(`/documents/${docId}`);
+};
+
+/**
+ * Analyze an image using Claude vision model
+ */
+export const analyzeImage = async (
+  request: ImageInsightsRequest
+): Promise<ImageInsightsResponse> => {
+  const client = await getApiClient();
+  const response = await client.post<ImageInsightsResponse>(
+    '/image-insights/analyze',
+    request
+  );
+  return response.data;
 };
 
 export default getApiClient;

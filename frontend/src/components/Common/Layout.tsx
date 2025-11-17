@@ -21,6 +21,11 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
       text: 'Extract Insights',
       href: '/insights',
     },
+    {
+      type: 'link' as const,
+      text: 'Image Insights',
+      href: '/image-insights',
+    },
   ];
 
   return (

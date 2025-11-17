@@ -31,6 +31,7 @@ INSIGHT_MODEL_ID = os.environ.get('INSIGHT_MODEL_ID')
 DYNAMODB_TABLE_NAME = os.environ.get('DYNAMODB_TABLE_NAME')
 REGION = os.environ.get('REGION', 'us-east-1')
 MAX_TOKENS = int(os.environ.get('MAX_TOKENS', '8192'))  # Configurable max tokens for responses
+TOP_K_RESULTS = int(os.environ.get('TOP_K_RESULTS', '5'))  # Number of chunks to retrieve from vector search
 
 # Initialize components (reused across invocations)
 cache_manager = CacheManager(region=REGION, table_name=DYNAMODB_TABLE_NAME)
@@ -164,7 +165,7 @@ def handle_extract_insights(event: Dict[str, Any]) -> Dict[str, Any]:
         context_chunks = vector_query.get_text_chunks(
             query_text=prompt,
             doc_id=doc_id,
-            top_k=5
+            top_k=TOP_K_RESULTS
         )
         
         if not context_chunks:

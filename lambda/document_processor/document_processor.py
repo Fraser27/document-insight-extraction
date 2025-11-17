@@ -38,6 +38,8 @@ EMBED_MODEL_ID = os.environ.get('EMBED_MODEL_ID')
 WSS_URL = os.environ.get('WSS_URL')
 DYNAMODB_TABLE_NAME = os.environ.get('DYNAMODB_TABLE_NAME')
 REGION = os.environ.get('REGION', 'us-east-1')
+CHUNK_SIZE = int(os.environ.get('CHUNK_SIZE', '2048'))
+CHUNK_OVERLAP = int(os.environ.get('CHUNK_OVERLAP', '204'))
 
 # Initialize AWS clients
 s3_client = boto3.client('s3', region_name=REGION)
@@ -46,7 +48,7 @@ s3_client = boto3.client('s3', region_name=REGION)
 pdf_extractor = PDFExtractor()
 image_detector = ImageDetector()
 ocr_processor = OCRProcessor(region=REGION)
-text_chunker = TextChunker(chunk_size=8192, chunk_overlap=819)
+text_chunker = TextChunker(chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP)
 embedding_generator = EmbeddingGenerator(region=REGION, model_id=EMBED_MODEL_ID)
 vector_store = VectorStore(
     region=REGION,

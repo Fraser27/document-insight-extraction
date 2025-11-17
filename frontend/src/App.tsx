@@ -2,6 +2,7 @@ import { Routes, Route, Navigate } from 'react-router-dom';
 import { Authenticator } from '@aws-amplify/ui-react';
 import { HomePage } from './pages/HomePage';
 import { InsightsPage } from './pages/InsightsPage';
+import { ImageInsightsPage } from './pages/ImageInsightsPage';
 
 function App() {
   return (
@@ -57,6 +58,7 @@ function App() {
           <Routes>
             <Route path="/" element={<HomePage />} />
             <Route path="/insights" element={<InsightsPage />} />
+            <Route path="/image-insights" element={<ImageInsightsPage />} />
             <Route path="*" element={<Navigate to="/" />} />
           </Routes>
         );

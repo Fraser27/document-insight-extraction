@@ -57,6 +57,10 @@ class ECRStack(BaseDocumentInsightStack):
 
         # Create CodeBuild project for UI build
         self.ui_build_project = self._create_ui_build_project()
+        
+        # Ensure CodeBuild project waits for ECR repository to be created
+        # This is necessary because the build project needs to push images to the repository
+        self.ui_build_project.node.add_dependency(self.ecr_repository)
 
         # Export outputs
         self._create_outputs()

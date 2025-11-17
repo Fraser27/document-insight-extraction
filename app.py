@@ -171,6 +171,12 @@ lambda_function_stack.grant_insight_extractor_dynamodb_permissions(
     dynamodb_table_arn=dynamodb_stack.insights_cache_table.table_arn
 )
 
+# Create Image Insights Lambda
+image_insights_lambda = lambda_function_stack.create_image_insights_lambda(
+    pypdf_layer_arn=lambda_layer_stack.pypdf_layer_arn,
+    boto3_layer_arn=lambda_layer_stack.boto3_layer_arn
+)
+
 # Configure S3 event notifications to trigger Document Processor
 # Note: This is done in the Lambda Function stack to avoid cyclic dependencies
 #lambda_function_stack.configure_s3_event_notifications(s3_stack.documents_bucket)
@@ -188,6 +194,7 @@ api_gateway_stack = ApiGatewayStack(
     insight_extractor_arn=insight_extractor_lambda.function_arn,
     document_processor_arn=document_processor_lambda.function_arn,
     document_api_arn=document_api_lambda.function_arn,
+    image_insights_arn=image_insights_lambda.function_arn,
     description=f"Document Insight Extraction System - API Gateway - {env_name} environment"
 )
 

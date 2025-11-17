@@ -131,7 +131,7 @@ class S3BucketStack(BaseDocumentInsightStack):
             Tuple of (CfnVectorBucket, CfnIndex) constructs
         """
         # Get vector dimensions from config
-        vector_dimensions = self.config.get("vector_dimensions", 1024)
+        vector_dimensions = self.config.get("vector_dimensions", 512)
         
         # Create vector bucket using L1 CloudFormation construct
         vector_bucket = s3vectors.CfnVectorBucket(

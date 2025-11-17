@@ -382,22 +382,106 @@ if [ -f "ecr-outputs.json" ]; then
             if [ -n "$ECR_URI" ]; then
                 echo "ECR Repository: $ECR_URI"
                 
+                # Navigate to frontend directory
+                cd frontend
+                
+                # Create config.json using the same logic as buildspec
+                echo "Creating environment configuration..."
+                echo "Variables - Region:$deployment_region, UserPoolId:$USER_POOL_ID, ClientId:$USER_POOL_CLIENT_ID, API URL:$REST_API_URL, WebSocket URL:$WEBSOCKET_URL"
+                
+                # Create config directory and remove existing config files
+                mkdir -p src/config
+                rm -f src/config/config.json
+                
+                # Create config.json using jq (same as buildspec)
+                jq -n \
+                  --arg region "$deployment_region" \
+                  --arg userPoolId "$USER_POOL_ID" \
+                  --arg clientId "$USER_POOL_CLIENT_ID" \
+                  --arg apiUrl "$REST_API_URL" \
+                  --arg websocketUrl "$WEBSOCKET_URL" \
+                  '{
+                    region: $region,
+                    userPoolId: $userPoolId,
+                    clientId: $clientId,
+                    apiUrl: $apiUrl,
+                    websocketUrl: $websocketUrl
+                  }' > src/config/config.json
+                
+                echo "Generated config.json:"
+                cat src/config/config.json
+                
+                # Install npm dependencies (same as buildspec)
+                echo "========================================="
+                echo "Installing npm dependencies..."
+                echo "========================================="
+                echo "Clearing npm cache..."
+                npm cache clean --force
+                
+                echo "Setting npm registry to default..."
+                npm config set registry https://registry.npmjs.org/
+                
+                echo "Running npm ci with verbose logging..."
+                if ! npm ci --verbose --no-audit --no-fund; then
+                    echo "npm ci failed, trying with legacy peer deps..."
+                    if ! npm ci --verbose --no-audit --no-fund --legacy-peer-deps; then
+                        echo "npm ci with legacy-peer-deps failed, trying npm install as fallback..."
+                        rm -rf node_modules package-lock.json
+                        npm install --no-audit --no-fund --legacy-peer-deps
+                    fi
+                fi
+                
+                # Build React application
+                echo "========================================="
+                echo "Building React app with Vite..."
+                echo "========================================="
+                npm run build
+                
+                if [ $? -ne 0 ]; then
+                    echo "✗ React build failed"
+                    cd ..
+                    exit 1
+                fi
+                
+                echo "✓ React build completed successfully"
+                echo "Build output size:"
+                du -sh dist
+                ls -la dist
+                
                 # Login to ECR
+                echo "========================================="
                 echo "Logging in to ECR..."
+                echo "========================================="
                 aws ecr get-login-password --region $deployment_region | docker login --username AWS --password-stdin $ECR_URI
                 
                 # Build Docker image
+                echo "========================================="
                 echo "Building Docker image..."
-                cd frontend
+                echo "========================================="
                 docker build -t document-insight-ui:latest .
                 
-                # Tag and push image
-                echo "Tagging and pushing image..."
-                docker tag document-insight-ui:latest $ECR_URI:latest
-                docker push $ECR_URI:latest
+                if [ $? -eq 0 ]; then
+                    echo "✓ Docker image built successfully"
+                    
+                    # Tag and push image
+                    echo "Tagging and pushing image..."
+                    docker tag document-insight-ui:latest $ECR_URI:latest
+                    docker push $ECR_URI:latest
+                    
+                    if [ $? -eq 0 ]; then
+                        echo "✓ Docker image pushed successfully (local build)"
+                    else
+                        echo "✗ Failed to push Docker image"
+                        cd ..
+                        exit 1
+                    fi
+                else
+                    echo "✗ Docker build failed"
+                    cd ..
+                    exit 1
+                fi
                 
                 cd ..
-                echo "✓ Docker image pushed successfully (local build)"
             else
                 echo "✗ Could not find ECR repository URI"
                 exit 1

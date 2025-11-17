@@ -59,6 +59,7 @@ class LambdaFunctionStack(BaseDocumentInsightStack):
         # Lambda functions (created later after dependencies are set)
         self.document_processor_lambda: Optional[lambda_.Function] = None
         self.insight_extractor_lambda: Optional[lambda_.Function] = None
+        self.image_insights_lambda: Optional[lambda_.Function] = None
         
     def create_document_processor_lambda(
         self,
@@ -153,6 +154,8 @@ class LambdaFunctionStack(BaseDocumentInsightStack):
                 "REGION": self.region,
                 "LOG_LEVEL": self.config.get("log_level", "INFO"),
                 "OCR_MODEL_ID": self.config.get("ocr_model_id", "INFO"),
+                "CHUNK_SIZE": str(self.config.get("chunk_size", 2048)),
+                "CHUNK_OVERLAP": str(self.config.get("chunk_overlap", 204)),
             },
             # CloudWatch Logs
             log_group=log_group,
@@ -514,6 +517,7 @@ class LambdaFunctionStack(BaseDocumentInsightStack):
                 "REGION": self.region,
                 "LOG_LEVEL": self.config.get("log_level", "INFO"),
                 "MAX_TOKENS": self.config.get("max_tokens", "50000"),  # Max output tokens for Claude 3.5 Sonnet
+                "TOP_K_RESULTS": str(self.config.get("top_k_results", 5)),
             },
             # CloudWatch Logs
             log_group=log_group,
@@ -1025,4 +1029,146 @@ class LambdaFunctionStack(BaseDocumentInsightStack):
             principal="apigateway.amazonaws.com",
             source_arn=f"arn:aws:execute-api:{region}:{account_id}:{websocket_api.ref}/*/*",
             source_account=account_id,
+        )
+
+    def create_image_insights_lambda(
+        self,
+        pypdf_layer_arn: str,
+        boto3_layer_arn: str
+    ) -> lambda_.Function:
+        """
+        Create the Image Insights Lambda function.
+        
+        Args:
+            pypdf_layer_arn: ARN of pypdf Lambda layer (includes Pillow)
+            boto3_layer_arn: ARN of boto3 Lambda layer
+            
+        Returns:
+            Lambda Function construct
+        """
+        # Create CloudWatch log group
+        log_group = logs.LogGroup(
+            self,
+            "ImageInsightsLogGroup",
+            log_group_name=f"/aws/lambda/{self.get_resource_name('image-insights')}",
+            removal_policy=self.removal_policy,
+            retention=logs.RetentionDays.ONE_MONTH
+        )
+        
+        # Create Lambda execution role
+        execution_role = self._create_image_insights_role()
+        
+        # Create Lambda layers from ARNs
+        pypdf_layer = lambda_.LayerVersion.from_layer_version_arn(
+            self,
+            "ImageInsightsPypdfLayer",
+            layer_version_arn=pypdf_layer_arn
+        )
+        
+        boto3_layer = lambda_.LayerVersion.from_layer_version_arn(
+            self,
+            "ImageInsightsBoto3Layer",
+            layer_version_arn=boto3_layer_arn
+        )
+        
+        # Create Lambda function
+        self.image_insights_lambda = lambda_.Function(
+            self,
+            "ImageInsightsLambda",
+            function_name=self.get_resource_name("image-insights"),
+            description="Analyze images using Claude vision model for content moderation and insights",
+            runtime=lambda_.Runtime.PYTHON_3_10,
+            # x86_64 architecture for Pillow/OpenCV compatibility
+            architecture=lambda_.Architecture.X86_64,
+            handler="image_insights.handler",
+            code=lambda_.Code.from_asset("lambda/image_insights"),
+            # Memory and timeout configuration
+            memory_size=2048,
+            timeout=Duration.seconds(120),  # 2 minutes for image analysis
+            # Attach layers
+            layers=[pypdf_layer, boto3_layer],
+            # IAM role
+            role=execution_role,
+            # Environment variables
+            environment={
+                "REGION": self.region,
+                "VISION_MODEL_ID": self.config.get("vision_model_id", "anthropic.claude-3-sonnet-20240229-v1:0"),
+                "LOG_LEVEL": self.config.get("log_level", "INFO"),
+            },
+            # CloudWatch Logs
+            log_group=log_group,
+        )
+        
+        # Grant Bedrock permissions
+        self._grant_image_insights_bedrock_permissions()
+        
+        # Add outputs
+        self._add_image_insights_outputs()
+        
+        return self.image_insights_lambda
+
+    def _create_image_insights_role(self) -> iam.Role:
+        """
+        Create IAM role for Image Insights Lambda.
+        
+        Returns:
+            IAM Role with necessary permissions
+        """
+        role = iam.Role(
+            self,
+            "ImageInsightsRole",
+            role_name=self.get_resource_name("image-insights-role"),
+            assumed_by=iam.ServicePrincipal("lambda.amazonaws.com"),
+            description="Execution role for Image Insights Lambda function",
+            managed_policies=[
+                # Basic Lambda execution permissions
+                iam.ManagedPolicy.from_aws_managed_policy_name(
+                    "service-role/AWSLambdaBasicExecutionRole"
+                )
+            ]
+        )
+        
+        return role
+
+    def _grant_image_insights_bedrock_permissions(self) -> None:
+        """Grant Bedrock permissions to Image Insights Lambda."""
+        if not self.image_insights_lambda:
+            raise ValueError("Image insights Lambda function must be set first")
+        
+        vision_model_id = self.config.get("vision_model_id", "anthropic.claude-3-sonnet-20240229-v1:0")
+        
+        # Grant permission to invoke Bedrock vision models
+        self.image_insights_lambda.add_to_role_policy(
+            iam.PolicyStatement(
+                effect=iam.Effect.ALLOW,
+                actions=[
+                    "bedrock:InvokeModel",
+                    "bedrock:InvokeModelWithResponseStream",
+                ],
+                resources=[
+                    # Allow any Bedrock model for vision analysis
+                    f"arn:aws:bedrock:*::foundation-model/*",
+                    f"arn:aws:bedrock:*:*:inference-profile/*",
+                    f"arn:aws:bedrock:*:*:application-inference-profile/*"
+                ]
+            )
+        )
+
+    def _add_image_insights_outputs(self) -> None:
+        """Add CloudFormation outputs for Image Insights Lambda."""
+        if not self.image_insights_lambda:
+            return
+        
+        self.add_stack_output(
+            "ImageInsightsLambdaArn",
+            value=self.image_insights_lambda.function_arn,
+            description="ARN of Image Insights Lambda function",
+            export_name=f"{self.stack_name}-ImageInsightsArn"
+        )
+        
+        self.add_stack_output(
+            "ImageInsightsLambdaName",
+            value=self.image_insights_lambda.function_name,
+            description="Name of Image Insights Lambda function",
+            export_name=f"{self.stack_name}-ImageInsightsName"
         )

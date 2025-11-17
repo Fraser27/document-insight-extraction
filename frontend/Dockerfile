@@ -1,7 +1,7 @@
 # Multi-stage build for React application
 
 # Stage 1: Build the React application
-FROM node:20-alpine AS builder
+FROM public.ecr.aws/docker/library/node:20-alpine AS builder
 
 WORKDIR /app
 
@@ -18,7 +18,7 @@ COPY . .
 RUN npm run build
 
 # Stage 2: Serve with Nginx
-FROM nginx:alpine
+FROM public.ecr.aws/nginx/nginx:stable-alpine
 
 # Copy custom nginx configuration
 COPY nginx.conf /etc/nginx/nginx.conf

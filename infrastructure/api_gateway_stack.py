@@ -40,6 +40,7 @@ class ApiGatewayStack(BaseDocumentInsightStack):
         insight_extractor_arn: str,
         document_processor_arn: str,
         document_api_arn: str,
+        image_insights_arn: str,
         **kwargs
     ) -> None:
         """
@@ -54,6 +55,7 @@ class ApiGatewayStack(BaseDocumentInsightStack):
             insight_extractor_arn: ARN of the insight extractor Lambda function
             document_processor_arn: ARN of the document processor Lambda function
             document_api_arn: ARN of the document api Lambda function
+            image_insights_arn: ARN of the image insights Lambda function
             **kwargs: Additional stack properties
         """
         super().__init__(scope, construct_id, env_name, config, **kwargs)
@@ -83,6 +85,14 @@ class ApiGatewayStack(BaseDocumentInsightStack):
             self, 
             f"{env_name}_document_api_lambda", 
             function_arn=document_api_arn, 
+            same_environment=True
+        )
+
+        # Import Image Insights Lambda from ARN
+        self.image_insights_lambda = lambda_.Function.from_function_attributes(
+            self, 
+            f"{env_name}_image_insights_lambda", 
+            function_arn=image_insights_arn, 
             same_environment=True
         )
                 
@@ -171,6 +181,9 @@ class ApiGatewayStack(BaseDocumentInsightStack):
         self.configure_document_list_endpoint(self.document_api_lambda)
         self.configure_document_status_endpoint(self.document_api_lambda)
         
+        # Configure image insights endpoint
+        self.configure_image_insights_endpoint(self.image_insights_lambda)
+        
         # Add CORS to all collected resources
         self._add_cors_to_collected_resources()
         
@@ -255,6 +268,17 @@ class ApiGatewayStack(BaseDocumentInsightStack):
             function_name=self.document_api_lambda.function_name,
             principal="apigateway.amazonaws.com",
             source_arn=f"arn:aws:execute-api:{region}:{account_id}:{self.rest_api.rest_api_id}/*/GET/documents/*/status",
+            source_account=account_id,
+        )
+        
+        # Image Insights Lambda permissions
+        lambda_.CfnPermission(
+            self,
+            "ImageInsightsLambdaPermission",
+            action="lambda:InvokeFunction",
+            function_name=self.image_insights_lambda.function_name,
+            principal="apigateway.amazonaws.com",
+            source_arn=f"arn:aws:execute-api:{region}:{account_id}:{self.rest_api.rest_api_id}/*/POST/image-insights/analyze",
             source_account=account_id,
         )
 
@@ -542,6 +566,59 @@ class ApiGatewayStack(BaseDocumentInsightStack):
         )
         
 
+
+    def configure_image_insights_endpoint(
+        self,
+        image_insights_lambda: lambda_.IFunction
+    ) -> None:
+        """
+        Configure POST /image-insights/analyze endpoint.
+        
+        This endpoint analyzes images using Claude vision model for content moderation.
+        
+        Args:
+            image_insights_lambda: Lambda function to analyze images
+        """
+        self.image_insights_lambda = image_insights_lambda
+        
+        # Create /image-insights resource
+        image_insights_resource = self.rest_api.root.add_resource("image-insights")
+        
+        # Create /image-insights/analyze resource
+        analyze_resource = image_insights_resource.add_resource("analyze")
+        
+        # Collect resources for CORS configuration
+        self.api_resources_for_cors.extend([image_insights_resource, analyze_resource])
+        
+        # Create Lambda integration
+        image_insights_integration = apigateway.LambdaIntegration(
+            image_insights_lambda,
+            proxy=True,
+            integration_responses=[
+                apigateway.IntegrationResponse(
+                    status_code="200",
+                    response_parameters={
+                        "method.response.header.Access-Control-Allow-Origin": "'*'"
+                    }
+                )
+            ]
+        )
+        
+        # Add POST method with Cognito authorizer
+        analyze_resource.add_method(
+            "POST",
+            image_insights_integration,
+            authorizer=self.authorizer,
+            authorization_type=apigateway.AuthorizationType.COGNITO,
+            method_responses=[
+                apigateway.MethodResponse(
+                    status_code="200",
+                    response_parameters={
+                        "method.response.header.Access-Control-Allow-Origin": True
+                    }
+                )
+            ]
+        )
 
     def add_cors_options(self, api_resource: apigateway.IResource) -> None:
         """

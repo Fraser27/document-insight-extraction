@@ -29,10 +29,10 @@ phases:
       - echo "Building pypdf layer..."
       - echo "========================================="
       
-      # Build pypdf x86_64 layer with image support
+      # Build pypdf x86_64 layer with image support and pyzbar
       - echo "Building pypdf x86_64 layer..."
       - mkdir -p pypdf-layer-x86_64/python
-      - pip install --target pypdf-layer-x86_64/python 'pypdf[image]' pillow --platform manylinux2014_x86_64 --only-binary=':all:' --python-version 3.12
+      - pip install --target pypdf-layer-x86_64/python 'pypdf[image]' pillow pyzbar --platform manylinux2014_x86_64 --only-binary=':all:' --python-version 3.12
       - cd pypdf-layer-x86_64
       - zip -r ../pypdf-layer-x86_64.zip python
       - cd ..
@@ -40,7 +40,7 @@ phases:
       
       # Publish pypdf x86_64 layer
       - echo "Publishing pypdf x86_64 layer version..."
-      - PYPDF_LAYER_VERSION=$(aws lambda publish-layer-version --layer-name "${PROJECT_NAME}-pypdf-layer-${ENV_NAME}-x86-64" --description "pypdf library for PDF text extraction (x86_64)" --zip-file fileb://pypdf-layer-x86_64.zip --compatible-runtimes python3.12 --compatible-architectures x86_64 --region $AWS_REGION --query 'Version' --output text)
+      - PYPDF_LAYER_VERSION=$(aws lambda publish-layer-version --layer-name "${PROJECT_NAME}-pypdf-layer-${ENV_NAME}-x86-64" --description "pypdf, Pillow, and pyzbar for PDF/image processing (x86_64)" --zip-file fileb://pypdf-layer-x86_64.zip --compatible-runtimes python3.12 --compatible-architectures x86_64 --region $AWS_REGION --query 'Version' --output text)
       - echo "Published pypdf x86_64 layer version - $PYPDF_LAYER_VERSION"
       
       # ========================================
