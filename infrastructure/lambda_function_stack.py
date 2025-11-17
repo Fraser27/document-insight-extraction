@@ -1077,7 +1077,7 @@ class LambdaFunctionStack(BaseDocumentInsightStack):
             "ImageInsightsLambda",
             function_name=self.get_resource_name("image-insights"),
             description="Analyze images using Claude vision model for content moderation and insights",
-            runtime=lambda_.Runtime.PYTHON_3_10,
+            runtime=lambda_.Runtime.PYTHON_3_12,
             # x86_64 architecture for Pillow/OpenCV compatibility
             architecture=lambda_.Architecture.X86_64,
             handler="image_insights.handler",

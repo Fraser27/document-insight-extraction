@@ -13,9 +13,25 @@ from typing import Dict, Any, List, Optional, Tuple
 from botocore.exceptions import ClientError
 from decimal import Decimal
 from io import BytesIO
-import pyzbar
 
+# Set library path for zbar before importing pyzbar
+os.environ['LD_LIBRARY_PATH'] = '/opt/lib:' + os.environ.get('LD_LIBRARY_PATH', '')
+print(f"LD_LIBRARY_PATH: {os.environ.get('LD_LIBRARY_PATH')}")
+
+# Debug: Check if zbar library exists
+import glob
+zbar_libs = glob.glob('/opt/lib/libzbar*')
+print(f"Found zbar libraries: {zbar_libs}")
+
+import pyzbar
 print(f"pyzbar.__version__ {pyzbar.__version__}")
+
+# Try importing PIL early to debug
+try:
+    import PIL
+    print(f"PIL.__version__ {PIL.__version__}")
+except Exception as e:
+    print(f"PIL import failed: {e}")
 
 # Configure logging
 log_level = os.environ.get('LOG_LEVEL', 'INFO')
@@ -35,14 +51,18 @@ bedrock_runtime = boto3.client('bedrock-runtime', region_name=REGION)
 # Import Pillow for QR code processing
 try:
     from PIL import Image
+    print(f"Successfully imported PIL.Image")
     try:
         from pyzbar.pyzbar import decode as pyzbar_decode
+        print(f"Successfully imported pyzbar_decode")
         PYZBAR_AVAILABLE = True
-    except ImportError:
+    except ImportError as e:
+        print(f"pyzbar.pyzbar import failed: {e}")
         logger.warning("pyzbar not available - QR code decoding will be limited")
         PYZBAR_AVAILABLE = False
     PILLOW_AVAILABLE = True
-except ImportError:
+except ImportError as e:
+    print(f"PIL import failed: {e}")
     logger.warning("Pillow not available - QR code decoding will be disabled")
     PILLOW_AVAILABLE = False
     PYZBAR_AVAILABLE = False
@@ -145,11 +165,15 @@ def handle_analyze_image(event: Dict[str, Any]) -> Dict[str, Any]:
         # Analyze image with Claude
         analysis_result = analyze_image_with_claude(image_base64, prompt)
         
-        # If QR code detected, decode it
+        # If QR code detected, try to decode it (optional feature)
         if analysis_result.get('qr_code_detected') and analysis_result.get('qr_bounding_box'):
-            qr_data = decode_qr_code(image_base64, analysis_result['qr_bounding_box'])
-            if qr_data:
-                analysis_result['qr_code_data'] = qr_data
+            if PYZBAR_AVAILABLE:
+                qr_data = decode_qr_code(image_base64, analysis_result['qr_bounding_box'])
+                if qr_data:
+                    analysis_result['qr_code_data'] = qr_data
+            else:
+                logger.info("QR code detected but pyzbar not available for decoding")
+                analysis_result['qr_decode_available'] = False
         
         return {
             'statusCode': 200,
@@ -200,6 +224,7 @@ def analyze_image_with_claude(image_base64: str, user_prompt: str = '') -> Dict[
     "indicators": ["List of forgery indicators if any"]
   },
   "qr_code_detected": true/false,
+  "qr_code_data": "Decoded QR code content if readable, otherwise null",
   "qr_bounding_box": {
     "x": 0,
     "y": 0,
@@ -210,8 +235,8 @@ def analyze_image_with_claude(image_base64: str, user_prompt: str = '') -> Dict[
 
 IMPORTANT INSTRUCTIONS:
 - Be thorough but concise in your analysis
-- For QR codes: Provide pixel coordinates relative to the image dimensions. The bounding box should tightly fit the QR code.
-- If no QR code is detected, set qr_code_detected to false and qr_bounding_box to null
+- For QR codes: If detected, try to read the QR code content and include it in qr_code_data. Also provide pixel coordinates relative to the image dimensions in qr_bounding_box. The bounding box should tightly fit the QR code.
+- If no QR code is detected, set qr_code_detected to false, qr_code_data to null, and qr_bounding_box to null
 - For forgery detection: Look for inconsistencies in lighting, shadows, edges, text alignment, or digital artifacts
 - Confidence should be between 0.0 (no confidence) and 1.0 (very confident)
 
@@ -298,6 +323,8 @@ JSON Response:"""
                     }
                 if 'qr_code_detected' not in analysis_result:
                     analysis_result['qr_code_detected'] = False
+                if 'qr_code_data' not in analysis_result:
+                    analysis_result['qr_code_data'] = None
                 if 'qr_bounding_box' not in analysis_result:
                     analysis_result['qr_bounding_box'] = None
                     

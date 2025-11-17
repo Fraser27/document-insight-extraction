@@ -32,9 +32,31 @@ phases:
       # Build pypdf x86_64 layer with image support and pyzbar
       - echo "Building pypdf x86_64 layer..."
       - mkdir -p pypdf-layer-x86_64/python
-      - pip install --target pypdf-layer-x86_64/python 'pypdf[image]' pillow pyzbar --platform manylinux2014_x86_64 --only-binary=':all:' --python-version 3.12
+      - mkdir -p pypdf-layer-x86_64/lib
+      
+      # Install Python packages
+      - pip install --target pypdf-layer-x86_64/python 'pypdf[image]' pyzbar --platform manylinux2014_x86_64 --only-binary=':all:' --python-version 3.12
+      - pip install -U --target pypdf-layer-x86_64/python Pillow --platform manylinux2014_x86_64 --only-binary=':all:' --python-version 3.12
+      
+      # Install zbar system library
+      - echo "Installing zbar library..."
+      - yum install -y zbar zbar-devel || apt-get install -y libzbar0 libzbar-dev
+      
+      # Copy zbar shared libraries to layer
+      - echo "Copying zbar shared libraries..."
+      - cp -P /usr/lib64/libzbar.so* pypdf-layer-x86_64/lib/ 2>/dev/null || cp -P /usr/lib/x86_64-linux-gnu/libzbar.so* pypdf-layer-x86_64/lib/ || echo "zbar libs copied from alternative location"
+      
+      # Check what we copied
+      - echo "Zbar libraries in layer:"
+      - ls -la pypdf-layer-x86_64/lib/ || echo "No lib directory"
+      
+      # Check zbar dependencies
+      - echo "Checking zbar dependencies:"
+      - ldd /usr/lib64/libzbar.so.0 2>/dev/null || ldd /usr/lib/x86_64-linux-gnu/libzbar.so.0 2>/dev/null || echo "Could not check dependencies"
+      
+      # Create zip with both python and lib directories
       - cd pypdf-layer-x86_64
-      - zip -r ../pypdf-layer-x86_64.zip python
+      - zip -r ../pypdf-layer-x86_64.zip python lib
       - cd ..
       - echo "pypdf x86_64 layer size - $(du -h pypdf-layer-x86_64.zip | cut -f1)"
       
