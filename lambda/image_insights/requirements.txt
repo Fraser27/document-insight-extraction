@@ -1,7 +1,2 @@
-# QR Code and Barcode decoding
-# Note: pyzbar requires libzbar0 system library
-# This should be included in a Lambda layer or container image
-pyzbar==0.1.9
-
 # Note: Pillow is already included in the pypdf Lambda layer
 # No need to add it here

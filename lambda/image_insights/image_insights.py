@@ -14,24 +14,14 @@ from botocore.exceptions import ClientError
 from decimal import Decimal
 from io import BytesIO
 
-# Set library path for zbar before importing pyzbar
-os.environ['LD_LIBRARY_PATH'] = '/opt/lib:' + os.environ.get('LD_LIBRARY_PATH', '')
-print(f"LD_LIBRARY_PATH: {os.environ.get('LD_LIBRARY_PATH')}")
-
-# Debug: Check if zbar library exists
-import glob
-zbar_libs = glob.glob('/opt/lib/libzbar*')
-print(f"Found zbar libraries: {zbar_libs}")
-
-import pyzbar
-print(f"pyzbar.__version__ {pyzbar.__version__}")
-
-# Try importing PIL early to debug
+# Try importing PIL for image processing
 try:
-    import PIL
-    print(f"PIL.__version__ {PIL.__version__}")
-except Exception as e:
+    from PIL import Image
+    PILLOW_AVAILABLE = True
+    print(f"PIL.__version__ {Image.__version__ if hasattr(Image, '__version__') else 'unknown'}")
+except ImportError as e:
     print(f"PIL import failed: {e}")
+    PILLOW_AVAILABLE = False
 
 # Configure logging
 log_level = os.environ.get('LOG_LEVEL', 'INFO')
@@ -47,25 +37,6 @@ VISION_MODEL_ID = os.environ.get('VISION_MODEL_ID', 'anthropic.claude-3-sonnet-2
 
 # Initialize AWS clients
 bedrock_runtime = boto3.client('bedrock-runtime', region_name=REGION)
-
-# Import Pillow for QR code processing
-try:
-    from PIL import Image
-    print(f"Successfully imported PIL.Image")
-    try:
-        from pyzbar.pyzbar import decode as pyzbar_decode
-        print(f"Successfully imported pyzbar_decode")
-        PYZBAR_AVAILABLE = True
-    except ImportError as e:
-        print(f"pyzbar.pyzbar import failed: {e}")
-        logger.warning("pyzbar not available - QR code decoding will be limited")
-        PYZBAR_AVAILABLE = False
-    PILLOW_AVAILABLE = True
-except ImportError as e:
-    print(f"PIL import failed: {e}")
-    logger.warning("Pillow not available - QR code decoding will be disabled")
-    PILLOW_AVAILABLE = False
-    PYZBAR_AVAILABLE = False
 
 
 class CustomJsonEncoder(json.JSONEncoder):
@@ -165,15 +136,11 @@ def handle_analyze_image(event: Dict[str, Any]) -> Dict[str, Any]:
         # Analyze image with Claude
         analysis_result = analyze_image_with_claude(image_base64, prompt)
         
-        # If QR code detected, try to decode it (optional feature)
+        # If QR code detected, crop and return the QR code image
         if analysis_result.get('qr_code_detected') and analysis_result.get('qr_bounding_box'):
-            if PYZBAR_AVAILABLE:
-                qr_data = decode_qr_code(image_base64, analysis_result['qr_bounding_box'])
-                if qr_data:
-                    analysis_result['qr_code_data'] = qr_data
-            else:
-                logger.info("QR code detected but pyzbar not available for decoding")
-                analysis_result['qr_decode_available'] = False
+            qr_image_base64 = crop_qr_code_image(image_base64, analysis_result['qr_bounding_box'])
+            if qr_image_base64:
+                analysis_result['qr_code_image'] = qr_image_base64
         
         return {
             'statusCode': 200,
@@ -343,25 +310,19 @@ JSON Response:"""
         raise
 
 
-def decode_qr_code(image_base64: str, bounding_box: Optional[Dict[str, int]]) -> Optional[str]:
+def crop_qr_code_image(image_base64: str, bounding_box: Optional[Dict[str, int]]) -> Optional[str]:
     """
-    Decode QR code from image using Pillow and pyzbar.
-    
-    Based on AWS sample: https://github.com/aws-samples/barcode-qr-decoder-lambda
+    Crop QR code region from image and return as base64.
     
     Args:
         image_base64: Base64 encoded image
-        bounding_box: Optional dictionary with x, y, width, height for cropping
+        bounding_box: Dictionary with x, y, width, height for cropping
         
     Returns:
-        Decoded QR code data or None
+        Base64 encoded cropped QR code image or None
     """
     if not PILLOW_AVAILABLE:
-        logger.warning("Pillow not available, cannot decode QR code")
-        return None
-    
-    if not PYZBAR_AVAILABLE:
-        logger.warning("pyzbar not available, cannot decode QR code")
+        logger.warning("Pillow not available, cannot crop QR code")
         return None
     
     try:
@@ -373,7 +334,7 @@ def decode_qr_code(image_base64: str, bounding_box: Optional[Dict[str, int]]) ->
         image_data = base64.b64decode(image_base64)
         image = Image.open(BytesIO(image_data))
         
-        # Crop to bounding box if provided and valid
+        # Validate and crop to bounding box
         if bounding_box and all(k in bounding_box for k in ['x', 'y', 'width', 'height']):
             x = int(bounding_box['x'])
             y = int(bounding_box['y'])
@@ -383,35 +344,32 @@ def decode_qr_code(image_base64: str, bounding_box: Optional[Dict[str, int]]) ->
             # Validate bounding box is within image dimensions
             img_width, img_height = image.size
             if x >= 0 and y >= 0 and (x + width) <= img_width and (y + height) <= img_height:
+                # Add some padding around the QR code (10% on each side)
+                padding = int(min(width, height) * 0.1)
+                x = max(0, x - padding)
+                y = max(0, y - padding)
+                width = min(img_width - x, width + 2 * padding)
+                height = min(img_height - y, height + 2 * padding)
+                
                 # Crop the image to the bounding box
-                image = image.crop((x, y, x + width, y + height))
-                logger.info(f"Cropped image to bounding box: ({x}, {y}, {width}, {height})")
+                cropped_image = image.crop((x, y, x + width, y + height))
+                logger.info(f"Cropped QR code image: ({x}, {y}, {width}, {height})")
+                
+                # Convert cropped image to base64
+                buffer = BytesIO()
+                cropped_image.save(buffer, format='PNG')
+                cropped_base64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
+                
+                return cropped_base64
             else:
-                logger.warning(f"Invalid bounding box coordinates, using full image")
-        
-        # Decode QR codes using pyzbar (following AWS sample pattern)
-        decoded_objects = pyzbar_decode(image)
-        
-        if decoded_objects:
-            # Return all decoded QR codes (could be multiple)
-            qr_codes = []
-            for code in decoded_objects:
-                try:
-                    qr_data = code.data.decode('utf-8')
-                    qr_codes.append(qr_data)
-                    logger.info(f"Successfully decoded QR/barcode: {qr_data}")
-                except Exception as e:
-                    logger.warning(f"Could not decode QR code data: {str(e)}")
-            
-            # Return the first QR code found, or join multiple if found
-            if qr_codes:
-                return qr_codes[0] if len(qr_codes) == 1 else ', '.join(qr_codes)
-        
-        logger.info("No QR code or barcode detected in image")
-        return None
+                logger.warning(f"Invalid bounding box coordinates: ({x}, {y}, {width}, {height}) for image size ({img_width}, {img_height})")
+                return None
+        else:
+            logger.warning("Invalid or missing bounding box")
+            return None
         
     except Exception as e:
-        logger.error(f"Error processing QR code: {str(e)}", exc_info=True)
+        logger.error(f"Error cropping QR code image: {str(e)}", exc_info=True)
         return None
 
 
