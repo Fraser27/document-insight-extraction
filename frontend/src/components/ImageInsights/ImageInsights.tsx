@@ -83,6 +83,34 @@ const ImageInsights: React.FC = () => {
         <p>Upload an image to analyze with Claude vision model</p>
       </div>
 
+      {/* Features Info */}
+      <div className="features-info">
+        <h3>What can this analyze?</h3>
+        <div className="features-grid">
+          <div className="feature-item">
+            <div className="feature-icon">🔍</div>
+            <div className="feature-content">
+              <h4>Content Validation</h4>
+              <p>Validates image quality and extracts key information like names, ages, and document types</p>
+            </div>
+          </div>
+          <div className="feature-item">
+            <div className="feature-icon">🛡️</div>
+            <div className="feature-content">
+              <h4>Forgery Detection</h4>
+              <p>Detects potential image manipulation, deepfakes, and document forgeries with confidence scores</p>
+            </div>
+          </div>
+          <div className="feature-item">
+            <div className="feature-icon">📱</div>
+            <div className="feature-content">
+              <h4>QR Code Detection</h4>
+              <p>Automatically detects, reads, and extracts QR codes from images with precise location data</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <div className="image-insights-content">
         {/* Upload Section */}
         <div className="upload-section">
@@ -122,6 +150,16 @@ const ImageInsights: React.FC = () => {
               </label>
             )}
           </div>
+
+          {/* Info Tip */}
+          {!selectedImage && (
+            <div className="info-tip">
+              <div className="tip-icon">💡</div>
+              <div className="tip-content">
+                <strong>Tip:</strong> Upload images of IDs, documents, or any image containing QR codes for comprehensive analysis including forgery detection.
+              </div>
+            </div>
+          )}
 
           {/* Prompt Input */}
           <div className="prompt-section">
@@ -233,18 +271,32 @@ const ImageInsights: React.FC = () => {
               <div className={`status-badge ${insights.qr_code_detected ? 'detected' : 'not-detected'}`}>
                 {insights.qr_code_detected ? '✓ QR Code Detected' : 'No QR Code Found'}
               </div>
-              {insights.qr_code_detected && insights.qr_bounding_box && (
+              {insights.qr_code_detected && (
                 <div className="qr-info">
-                  <p>
-                    <strong>Location:</strong> x: {insights.qr_bounding_box.x}, y: {insights.qr_bounding_box.y}
-                  </p>
-                  <p>
-                    <strong>Size:</strong> {insights.qr_bounding_box.width} × {insights.qr_bounding_box.height}
-                  </p>
+                  {insights.qr_bounding_box && (
+                    <>
+                      <p>
+                        <strong>Location:</strong> x: {insights.qr_bounding_box.x}, y: {insights.qr_bounding_box.y}
+                      </p>
+                      <p>
+                        <strong>Size:</strong> {insights.qr_bounding_box.width} × {insights.qr_bounding_box.height}
+                      </p>
+                    </>
+                  )}
                   {insights.qr_code_data && (
                     <div className="qr-data">
                       <strong>Decoded Data:</strong>
                       <pre>{insights.qr_code_data}</pre>
+                    </div>
+                  )}
+                  {insights.qr_code_image && (
+                    <div className="qr-image-preview">
+                      <strong>Cropped QR Code:</strong>
+                      <img 
+                        src={`data:image/png;base64,${insights.qr_code_image}`} 
+                        alt="Cropped QR Code" 
+                        className="qr-code-image"
+                      />
                     </div>
                   )}
                 </div>

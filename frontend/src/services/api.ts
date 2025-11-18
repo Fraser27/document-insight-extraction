@@ -171,6 +171,7 @@ export interface ImageInsightsResponse {
     height: number;
   };
   qr_code_data?: string;
+  qr_code_image?: string; // Base64 encoded cropped QR code image
   raw_response?: string;
 }
 
