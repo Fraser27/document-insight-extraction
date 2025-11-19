@@ -1,4 +1,4 @@
-# Document Insight Extraction System
+# Document Insight Extraction System (Built with Kiro)
 
 A serverless AWS CDK application for processing PDF documents, generating vector embeddings, and extracting structured insights using Amazon Bedrock.
 
