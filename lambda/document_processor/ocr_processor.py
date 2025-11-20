@@ -8,8 +8,10 @@ import logging
 import json
 import base64
 import boto3
-from typing import List, Dict
+from typing import List, Dict, Tuple
 from decimal import Decimal
+from io import BytesIO
+from PIL import Image
 logger = logging.getLogger(__name__)
 
 
@@ -40,6 +42,9 @@ class OCRProcessor:
             Extracted text from the image
         """
         try:
+            # Convert JPEG to PNG since Claude doesn't support JPEG
+            image_data, image_format = self._convert_to_png_if_needed(image_data, image_format)
+            
             # Convert image format to MIME type
             mime_type = self._get_mime_type(image_format)
             
@@ -133,6 +138,44 @@ class OCRProcessor:
         
         return combined_text
     
+    def _convert_to_png_if_needed(self, image_data: bytes, image_format: str) -> Tuple[bytes, str]:
+        """
+        Convert JPEG images to PNG format since Claude doesn't support JPEG.
+        
+        Args:
+            image_data: Image bytes
+            image_format: Current image format
+            
+        Returns:
+            Tuple of (converted image bytes, new format)
+        """
+        try:
+            # Check if conversion is needed
+            if image_format.upper() in ["JPEG", "JPG", "JPEG2000"]:
+                self.logger.debug(f"Converting {image_format} to PNG for Claude compatibility")
+                
+                # Open image with PIL
+                image = Image.open(BytesIO(image_data))
+                
+                # Convert to RGB if necessary (some images might be in CMYK or other modes)
+                if image.mode not in ('RGB', 'RGBA', 'L'):
+                    image = image.convert('RGB')
+                
+                # Save as PNG
+                output = BytesIO()
+                image.save(output, format='PNG')
+                png_data = output.getvalue()
+                
+                self.logger.debug(f"Converted image from {len(image_data)} bytes to {len(png_data)} bytes")
+                return png_data, "PNG"
+            
+            # No conversion needed
+            return image_data, image_format
+            
+        except Exception as e:
+            self.logger.warning(f"Error converting image to PNG: {str(e)}, using original")
+            return image_data, image_format
+    
     def _get_mime_type(self, image_format: str) -> str:
         """
         Convert image format to MIME type.
@@ -152,4 +195,4 @@ class OCRProcessor:
             "JPEG2000": "image/jpeg",
         }
         
-        return format_map.get(image_format.upper(), "image/jpeg")
+        return format_map.get(image_format.upper(), "image/png")
